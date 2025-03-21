@@ -1,0 +1,526 @@
+.budget-details-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.budget-print-layout {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+.header-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.company-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #eee;
+}
+
+.budget-logo {
+  width: 150px;
+  height: auto;
+  object-fit: contain;
+}
+
+.company-info {
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.company-info p {
+  margin: 2px 0;
+}
+
+.dates-section {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.client-section,
+.items-section,
+.totals-section,
+.observations-section {
+  margin-bottom: 20px;
+  padding: 10px;
+  border: 1px solid #ddd;
+}
+
+.client-section {
+  margin-bottom: 30px;
+}
+
+.client-section h3 {
+  color: #333;
+  margin-bottom: 10px;
+}
+
+.client-section p {
+  margin: 5px 0;
+}
+
+.items-section {
+  margin: 20px 0;
+}
+
+.items-section h3 {
+  font-size: 14px;
+  margin: 0 0 10px 0;
+}
+
+.items-section table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.items-section th {
+  background-color: #f8f9fa;
+  padding: 12px;
+  text-align: left;
+  border-bottom: 2px solid #dee2e6;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.items-section td {
+  padding: 12px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.items-section td:last-child {
+  text-align: right;
+}
+
+.totals-section {
+  margin-top: 20px;
+  border-top: 2px solid #f0f0f0;
+  padding-top: 20px;
+}
+
+.price-breakdown {
+  text-align: right;
+}
+
+.price-breakdown p {
+  margin: 5px 0;
+  font-size: 1.1em;
+}
+
+.price-breakdown p:last-child {
+  font-weight: bold;
+  font-size: 1.2em;
+  margin-top: 10px;
+}
+
+.observations-section {
+  margin-top: 30px;
+  padding: 20px;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+}
+
+.observations-section h3 {
+  color: #333;
+  margin-bottom: 10px;
+}
+
+.budget-details-page {
+  padding: 20px;
+  max-width: 210mm;  /* A4 width */
+  margin: 20px auto;
+}
+
+.budget-header {
+  margin: 30px 0;
+}
+
+.budget-header h1 {
+  font-size: 16px;
+  font-weight: normal;
+  margin: 0;
+  color: var(--text-color);
+}
+
+.budget-dates {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-top: 5px;
+  color: #666;
+}
+
+.budget-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+}
+
+.budget-section h3 {
+  margin: 0 0 15px 0;
+  color: var(--text-color);
+  font-size: 18px;
+}
+
+.budget-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 15px;
+  table-layout: fixed; /* Fixed table layout for better column control */
+  max-width: 100%; /* Garante que a tabela não ultrapasse a largura do contêiner */
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+}
+
+.budget-table thead {
+  display: table-header-group;
+  width: 100%;
+}
+
+.budget-table thead tr {
+  width: 100%;
+  display: table;
+  table-layout: fixed;
+  border-bottom: 2px solid #999; /* Linha mais grossa entre cabeçalho e corpo */
+}
+
+.budget-table tbody {
+  width: 100%;
+  display: table-row-group;
+}
+
+.budget-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.budget-table th,
+.budget-table td {
+  border: 1px solid #ccc;
+  padding: 8px;
+  text-align: left;
+  word-wrap: break-word; /* Ensure text wraps */
+  overflow-wrap: break-word;
+  white-space: normal; /* Permite que o texto quebre em múltiplas linhas */
+  vertical-align: top; /* Alinha o conteúdo ao topo da célula */
+}
+
+.budget-table th.description,
+.budget-table td.description {
+  width: 55%; /* Aumentar mais o espaço para a descrição */
+  text-align: left;
+  white-space: normal; /* Permitir quebra de linha na descrição */
+  word-break: break-word; /* Quebrar palavras longas se necessário */
+  min-width: 200px; /* Garantir largura mínima */
+}
+
+.budget-table th.quantity,
+.budget-table td.quantity {
+  text-align: center;
+  width: 8%;
+  min-width: 40px; /* Garantir largura mínima */
+}
+
+.budget-table th.unit-price,
+.budget-table td.unit-price {
+  text-align: right;
+  width: 17%;
+  min-width: 80px; /* Garantir largura mínima */
+}
+
+.budget-table th.total,
+.budget-table td.total {
+  text-align: right;
+  width: 17%; /* Fixar a largura para garantir alinhamento consistente */
+  min-width: 80px; /* Garantir largura mínima */
+}
+
+.budget-table th {
+  background-color: #f5f5f5;
+  font-weight: bold; /* Deixar o cabeçalho em negrito */
+  color: var(--text-color);
+  text-transform: uppercase; /* Garantir que todos os cabeçalhos estejam em maiúsculas */
+}
+
+.text-right {
+  text-align: right;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.budget-total {
+  text-align: right;
+  font-size: 12px;
+  margin-top: 20px;
+  padding: 10px;
+  background-color: #f5f5f5;
+  border-radius: 8px;
+}
+
+.action-buttons-container {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.back-button, .print-button {
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.back-button {
+  background-color: #f0f0f0;
+  color: #333;
+}
+
+.back-button:hover {
+  background-color: #e0e0e0;
+}
+
+.print-button {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.print-button:hover {
+  background-color: #45a049;
+}
+
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  margin-top: 30px;
+}
+
+.budget-items {
+  margin-top: 20px;
+  overflow: hidden; /* Garante que o conteúdo não ultrapasse os limites */
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 5px; /* Adiciona um pequeno espaçamento interno */
+}
+
+/* Estilos para as colunas usando colgroup */
+.budget-table .col-description {
+  width: 55%;
+}
+
+.budget-table .col-quantity {
+  width: 8%;
+}
+
+.budget-table .col-unit-price {
+  width: 17%;
+}
+
+.budget-table .col-total {
+  width: 17%;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0.5cm; /* Reduzir as margens para melhorar o uso do espaço */
+  }
+
+  /* Reset universal box-sizing para impressão */
+  * {
+    box-sizing: border-box !important;
+  }
+
+  body {
+    background: white !important;
+    font-size: 12px !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .budget-details-page {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  .budget-print-layout {
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    max-width: 210mm !important; /* Largura máxima para A4 */
+  }
+  
+  .budget-items {
+    width: 100% !important;
+    overflow: hidden !important;
+    padding: 0 2px !important; /* Reduzir ainda mais o padding lateral */
+    margin: 10px 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .budget-table {
+    width: 100% !important;
+    table-layout: fixed !important;
+    page-break-inside: avoid !important;
+    margin: 0 !important; /* Remover margens */
+    font-size: 10px !important; /* Reduzir o tamanho da fonte */
+    border-collapse: collapse !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    border: 1px solid #000 !important;
+  }
+  
+  .budget-table thead {
+    display: table-header-group !important;
+    width: 100% !important;
+  }
+  
+  .budget-table thead tr {
+    width: 100% !important;
+    display: table !important;
+    table-layout: fixed !important;
+    border-bottom: 2px solid #000 !important;
+  }
+  
+  .budget-table tbody {
+    width: 100% !important;
+    display: table-row-group !important;
+  }
+  
+  .budget-table tbody tr {
+    display: table !important;
+    width: 100% !important;
+    table-layout: fixed !important;
+  }
+  
+  .budget-table th,
+  .budget-table td {
+    padding: 6px 4px !important; /* Mais padding vertical */
+    font-size: 10px !important; /* Fonte menor para impressão */
+    border: 1px solid #000 !important;
+    overflow: visible !important; /* Permitir que o conteúdo seja visível */
+    white-space: normal !important;
+    word-wrap: break-word !important;
+  }
+
+  .budget-table th.description,
+  .budget-table td.description {
+    width: 55% !important; /* Aumentar mais o espaço para a descrição */
+    text-align: left !important;
+    white-space: normal !important; /* Permitir quebra de linha na descrição */
+    word-break: break-word !important; /* Quebrar palavras longas se necessário */
+    min-width: 200px !important; /* Garantir largura mínima */
+  }
+
+  .budget-table th.quantity,
+  .budget-table td.quantity {
+    text-align: center !important;
+    width: 8% !important; /* Ajustar porcentagem de largura */
+    min-width: 40px !important; /* Garantir largura mínima */
+  }
+
+  .budget-table th.unit-price,
+  .budget-table td.unit-price {
+    text-align: right !important;
+    width: 17% !important; /* Ajustar porcentagem de largura */
+    min-width: 80px !important; /* Garantir largura mínima */
+  }
+
+  .budget-table th.total,
+  .budget-table td.total {
+    text-align: right !important;
+    width: 17% !important; /* Ajustar porcentagem de largura */
+    min-width: 80px !important; /* Garantir largura mínima */
+  }
+
+  .budget-table th {
+    background-color: #f5f5f5 !important;
+    font-weight: bold !important;
+    text-transform: uppercase !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Estilos para as colunas no modo impressão */
+  .budget-table .col-description {
+    width: 55% !important;
+  }
+
+  .budget-table .col-quantity {
+    width: 8% !important;
+  }
+
+  .budget-table .col-unit-price {
+    width: 17% !important;
+  }
+
+  .budget-table .col-total {
+    width: 17% !important;
+  }
+
+  .action-buttons-container {
+    display: none;
+  }
+
+  .action-buttons {
+    display: none !important;
+  }
+
+  .company-header {
+    margin-bottom: 20px !important;
+  }
+
+  .budget-logo {
+    width: 150px !important;
+  }
+
+  .company-info {
+    font-size: 12px !important;
+  }
+
+  .budget-header h1 {
+    font-size: 16px !important;
+    font-weight: normal !important;
+  }
+
+  .budget-dates {
+    font-size: 12px !important;
+  }
+
+  .client-info {
+    border: 1px solid #000 !important;
+    padding: 15px !important;
+  }
+
+  /* Hide all other elements */
+  body > *:not(.budget-details-page) {
+    display: none !important;
+  }
+}
