@@ -21,6 +21,7 @@ import { localDB } from './services/localDatabase';
 import VisitScheduler from './components/VisitScheduler';
 import ConnectionStatus from './components/ConnectionStatus';
 import './components/ConnectionStatus.css';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   const [companyLogo, setCompanyLogo] = useState(null);
@@ -36,9 +37,56 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const [visits, setVisits] = useState([]);
+  const [notification, setNotification] = useState(null); // Novo estado para notificações
+  const [onlineStatus, setOnlineStatus] = useState(null);
 
   useEffect(() => {
-    loadFromCache();
+    const checkInitialData = async () => {
+      setLoading(true);
+      
+      // Verificar se há conexão com a internet
+      const isOnline = navigator.onLine;
+      setOnlineStatus(isOnline);
+      
+      if (isOnline) {
+        // Se estiver online, sempre priorize carregar dados da API
+        // O fetchBudgets já foi chamado no useEffect anterior, não precisamos chamar novamente
+        console.log('Online, loading data from Supabase directly');
+      } else {
+        // Se estiver offline, tente carregar do cache
+        console.log('Offline, loading from cache');
+        await loadFromCache();
+      }
+      
+      setLoading(false);
+    };
+    
+    checkInitialData();
+    
+    // Adicionar listeners para detectar mudanças no status de conexão
+    const handleOnline = () => {
+      console.log('Voltou a ficar online');
+      setOnlineStatus(true);
+      setNotification('Conexão com a internet restabelecida. Sincronizando dados...');
+      syncData(); // Sincroniza dados quando voltar a ficar online
+    };
+    
+    const handleOffline = () => {
+      console.log('Ficou offline');
+      setOnlineStatus(false);
+      setNotification('Sem conexão com a internet. Usando dados em cache.');
+    };
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
     syncData();
     fetchVisits();
     
@@ -52,6 +100,20 @@ function App() {
         const { data, error } = await supabase.from('orcamentos').select('*');
         if (error) throw error;
         
+        console.log('Budgets fetched from Supabase:', data);
+        
+        // Sempre usar a versão mais recente do banco de dados
+        setBudgets(data);
+        
+        // Atualizar o cache local com os dados do Supabase
+        // Isso garante que apenas orçamentos válidos estão no cache
+        await localDB.clear('orcamentos');
+        if (data && data.length > 0) {
+          for (const budget of data) {
+            await localDB.put('orcamentos', budget);
+          }
+        }
+        
         // Check and update any 'pending' status to 'pendente'
         const needsUpdate = data.filter(budget => budget.status === 'pending');
         if (needsUpdate.length > 0) {
@@ -61,23 +123,143 @@ function App() {
               .from('orcamentos')
               .update({ status: 'pendente' })
               .eq('id', budget.id);
-            
-            // Update local storage as well
-            localDB.update('orcamentos', budget.id, { status: 'pendente' });
           }
           // Fetch again after updates
           const { data: updatedData, error: updatedError } = await supabase.from('orcamentos').select('*');
           if (updatedError) throw updatedError;
           setBudgets(updatedData);
-        } else {
-          setBudgets(data);
         }
       } catch (error) {
         console.error('Error fetching budgets:', error);
+        setNotification('Erro ao carregar orçamentos: ' + error.message);
       }
     };
 
     fetchBudgets();
+
+    // Configurar um listener em tempo real para atualizações, inserções e exclusões
+    const budgetsSubscription = supabase
+      .channel('orcamentos_changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', // Escuta todos os eventos (INSERT, UPDATE, DELETE)
+          schema: 'public', 
+          table: 'orcamentos' 
+        }, 
+        (payload) => {
+          console.log('Detected change in orcamentos table:', payload);
+          // Recarrega todos os orçamentos quando houver qualquer alteração
+          fetchBudgets();
+          
+          // Mostra notificação apropriada baseada no tipo de evento
+          if (payload.eventType === 'DELETE') {
+            setNotification('Um orçamento foi removido do banco de dados');
+          } else if (payload.eventType === 'INSERT') {
+            setNotification('Um novo orçamento foi adicionado');
+          } else if (payload.eventType === 'UPDATE') {
+            setNotification('Um orçamento foi atualizado');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      // Desinscrever do canal quando o componente for desmontado
+      budgetsSubscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Configurar listener para atualizações de clientes
+    const fetchCustomers = async () => {
+      try {
+        const { data, error } = await supabase.from('clientes').select('*');
+        if (error) throw error;
+        
+        console.log('Clientes fetched from Supabase:', data.length);
+        
+        // Atualizar o estado
+        setCustomers(data);
+        
+        // Atualizar o cache local
+        await localDB.clear('clientes');
+        if (data && data.length > 0) {
+          for (const cliente of data) {
+            await localDB.put('clientes', cliente);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching customers:', error);
+        setNotification('Erro ao carregar clientes: ' + error.message);
+      }
+    };
+
+    fetchCustomers();
+
+    // Configurar um listener em tempo real para clientes
+    const customersSubscription = supabase
+      .channel('clientes_changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', // Escuta todos os eventos (INSERT, UPDATE, DELETE)
+          schema: 'public', 
+          table: 'clientes' 
+        }, 
+        (payload) => {
+          console.log('Detected change in clientes table:', payload);
+          // Recarrega todos os clientes quando houver qualquer alteração
+          fetchCustomers();
+          
+          // Recarrega também os orçamentos para atualizar as referências aos clientes
+          const fetchBudgetsWithCustomers = async () => {
+            try {
+              const { data, error } = await supabase
+                .from('orcamentos')
+                .select(`
+                  *,
+                  clientes (
+                    id,
+                    name,
+                    email,
+                    phone,
+                    address
+                  )
+                `);
+                
+              if (error) throw error;
+              console.log('Budgets with customers fetched:', data.length);
+              
+              // Atualizar o estado e o cache local
+              setBudgets(data);
+              await localDB.clear('orcamentos');
+              if (data && data.length > 0) {
+                for (const budget of data) {
+                  await localDB.put('orcamentos', budget);
+                }
+              }
+              
+              // Mostrar notificação
+              if (payload.eventType === 'DELETE') {
+                setNotification('Um cliente foi removido do banco de dados');
+              } else if (payload.eventType === 'INSERT') {
+                setNotification('Um novo cliente foi adicionado');
+              } else if (payload.eventType === 'UPDATE') {
+                setNotification('Um cliente foi atualizado');
+              }
+            } catch (error) {
+              console.error('Error fetching budgets with customers:', error);
+            }
+          };
+          
+          fetchBudgetsWithCustomers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      // Desinscrever do canal quando o componente for desmontado
+      customersSubscription.unsubscribe();
+    };
   }, []);
 
   const loadFromCache = async () => {
@@ -134,8 +316,10 @@ function App() {
       setProducts(updatedProducts);
       setAccessories(updatedAccessories);
       if (updatedConfig?.company_logo) setCompanyLogo(updatedConfig.company_logo);
+      setNotification('Dados sincronizados com sucesso!'); // Mostrar notificação após sincronização
     } catch (error) {
       console.error('Error syncing data:', error);
+      setNotification('Erro ao sincronizar dados: ' + error.message); // Mostrar notificação de erro
     } finally {
       setSyncing(false);
     }
@@ -186,8 +370,10 @@ function App() {
       setBudgets(updatedBudgets);
 
       localDB.update('orcamentos', budgetId, { status: 'finalizado' });
+      setNotification('Orçamento finalizado com sucesso!'); // Mostrar notificação após finalizar orçamento
     } catch (error) {
       console.error('Error finalizing budget:', error);
+      setNotification('Erro ao finalizar orçamento: ' + error.message); // Mostrar notificação de erro
     }
   };
 
@@ -206,7 +392,12 @@ function App() {
         throw new Error('Orçamento não encontrado');
       }
 
-      if (budget.status !== 'pending') {
+      // Verificar se o orçamento está em estado pendente (compatível com toda a aplicação)
+      const isPending = (status) => {
+        return status === 'pendente' || status === 'pending' || !status || status === '' || status === null || status === undefined;
+      };
+
+      if (!isPending(budget.status)) {
         throw new Error('Apenas orçamentos pendentes podem ser cancelados');
       }
 
@@ -229,10 +420,10 @@ function App() {
       await localDB.put('orcamentos', updatedBudget);
 
       // Show success message
-      alert('Orçamento cancelado com sucesso');
+      setNotification('Orçamento cancelado com sucesso!'); // Mostrar notificação após cancelar orçamento
     } catch (error) {
       console.error('Error canceling budget:', error);
-      alert(error.message || 'Erro ao cancelar orçamento');
+      setNotification('Erro ao cancelar orçamento: ' + error.message); // Mostrar notificação de erro
     }
   };
 
@@ -274,15 +465,31 @@ function App() {
       await localDB.put('orcamentos', updatedBudget);
 
       // Show success message
-      alert('Orçamento reativado com sucesso');
+      setNotification('Orçamento reativado com sucesso!'); // Mostrar notificação após reativar orçamento
     } catch (error) {
       console.error('Error reactivating budget:', error);
-      alert(error.message || 'Erro ao reativar orçamento');
+      setNotification('Erro ao reativar orçamento: ' + error.message); // Mostrar notificação de erro
     }
   };
 
   const toggleSidebar = () => {
     setSidebarExpanded(!sidebarExpanded);
+  };
+
+  // Efeito para limpar notificações automaticamente
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => {
+        setNotification(null);
+      }, 4000); // A notificação desaparece após 4 segundos
+      
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  // Função para mostrar notificações
+  const showNotification = (message) => {
+    setNotification(message);
   };
 
   if (loading) {
@@ -301,7 +508,7 @@ function App() {
           <Login onLogin={handleLogin} companyLogo={companyLogo} />
         </div>
         <footer className="app-footer">
-          <p>© 2025 Vecchio Sistemas</p>
+          <p>&copy; 2025 Vecchio Sistemas</p>
         </footer>
       </div>
     );
@@ -387,99 +594,148 @@ function App() {
         </nav>
       </div>
       <main className={`main-content ${sidebarExpanded ? 'expanded' : ''}`}>
+        {notification && (
+          <div className="notification">
+            {notification}
+          </div>
+        )}
         <Routes>
           <Route 
             path="/" 
-            element={<HomePage 
-              budgets={budgets} 
-              customers={customers} 
-              visits={visits} 
-              setVisits={setVisits}
-            />}
+            element={
+              <ErrorBoundary>
+                <HomePage 
+                  budgets={budgets} 
+                  customers={customers} 
+                  visits={visits} 
+                  setVisits={setVisits}
+                />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/customers" 
             element={
-              authService.hasAccess('admin') ? (
-                <Customers 
-                  customers={customers} 
-                  setCustomers={setCustomers}
-                />
-              ) : (
-                <div>Acesso restrito</div>
-              )
+              <ErrorBoundary>
+                {authService.hasAccess('admin') ? (
+                  <Customers 
+                    customers={customers} 
+                    setCustomers={setCustomers}
+                  />
+                ) : (
+                  <div>Acesso restrito</div>
+                )}
+              </ErrorBoundary>
             }
           />
           <Route 
             path="/products" 
-            element={<Products products={products} setProducts={setProducts} />}
+            element={
+              <ErrorBoundary>
+                <Products products={products} setProducts={setProducts} />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/accessories" 
-            element={<Accessories accessories={accessories} setAccessories={setAccessories} />}
+            element={
+              <ErrorBoundary>
+                <Accessories accessories={accessories} setAccessories={setAccessories} />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/budgets" 
-            element={<BudgetStatusPage budgets={budgets} setBudgets={setBudgets} validadeOrcamento={validadeOrcamento} />}
+            element={
+              <ErrorBoundary>
+                <BudgetStatusPage budgets={budgets} setBudgets={setBudgets} validadeOrcamento={validadeOrcamento} />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/budgets/new" 
-            element={<Budgets 
-              budgets={budgets} 
-              setBudgets={setBudgets} 
-              customers={customers} 
-              products={products} 
-              accessories={accessories} 
-              setCustomers={setCustomers} 
-            />}
+            element={
+              <ErrorBoundary>
+                <Budgets 
+                  budgets={budgets} 
+                  setBudgets={setBudgets} 
+                  customers={customers} 
+                  products={products} 
+                  accessories={accessories} 
+                  setCustomers={setCustomers} 
+                />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/budgets/:budgetId/edit" 
-            element={<Budgets 
-              budgets={budgets} 
-              setBudgets={setBudgets} 
-              customers={customers} 
-              products={products} 
-              accessories={accessories} 
-              setCustomers={setCustomers} 
-            />}
+            element={
+              <ErrorBoundary>
+                <Budgets 
+                  budgets={budgets} 
+                  setBudgets={setBudgets} 
+                  customers={customers} 
+                  products={products} 
+                  accessories={accessories} 
+                  setCustomers={setCustomers} 
+                />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/budgets/:budgetId/view" 
-            element={<BudgetDetailsPage companyLogo={companyLogo} />}
+            element={
+              <ErrorBoundary>
+                <BudgetDetailsPage companyLogo={companyLogo} />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/reports" 
-            element={<Reports budgets={budgets} customers={customers} />}
+            element={
+              <ErrorBoundary>
+                <Reports budgets={budgets} customers={customers} />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/visits" 
-            element={<VisitScheduler visits={visits} setVisits={setVisits} />}
+            element={
+              <ErrorBoundary>
+                <VisitScheduler visits={visits} setVisits={setVisits} />
+              </ErrorBoundary>
+            }
           />
           <Route 
             path="/configuracoes" 
             element={
-              authService.hasAccess('admin') ? (
-                <Configuracoes 
-                  setCompanyLogo={setCompanyLogo} 
-                  companyLogo={companyLogo} 
-                  validadeOrcamento={validadeOrcamento} 
-                  setValidadeOrcamento={setValidadeOrcamento} 
-                />
-              ) : (
-                <div>Acesso restrito</div>
-              )
+              <ErrorBoundary>
+                {authService.hasAccess('admin') ? (
+                  <Configuracoes 
+                    setCompanyLogo={setCompanyLogo} 
+                    companyLogo={companyLogo} 
+                    validadeOrcamento={validadeOrcamento} 
+                    setValidadeOrcamento={setValidadeOrcamento} 
+                  />
+                ) : (
+                  <div>Acesso restrito</div>
+                )}
+              </ErrorBoundary>
             }
           />
           <Route 
             path="/test" 
-            element={<TestDB />}
+            element={
+              <ErrorBoundary>
+                <TestDB />
+              </ErrorBoundary>
+            }
           />
         </Routes>
       </main>
       
       <footer className="app-footer">
-        <div>© 2025 Vecchio Sistemas <ConnectionStatus /></div>
+        <div>&copy; 2025 Vecchio Sistemas <ConnectionStatus /></div>
       </footer>
     </div>
   );

@@ -6,9 +6,14 @@ function BudgetStatusPage({ budgets, setBudgets, validadeOrcamento }) {
   // Debug log to see the budgets data
   console.log('BudgetStatusPage - All budgets:', budgets);
   
-  // Check if we have any budgets with pending status
+  // Helper function to check if a budget status is pending (igual à função no BudgetList)
+  const isPending = (status) => {
+    return status === 'pendente' || status === 'pending' || !status || status === '' || status === null || status === undefined;
+  };
+  
+  // Check if we have any budgets with pending status - agora usando a função isPending
   const pendingBudgets = budgets.filter(budget => 
-    budget.status === 'pendente'
+    isPending(budget.status)
   );
   console.log('BudgetStatusPage - Pending budgets:', pendingBudgets);
 
@@ -46,11 +51,6 @@ function BudgetStatusPage({ budgets, setBudgets, validadeOrcamento }) {
         alert('Orçamento não encontrado');
         return;
       }
-      
-      // Helper to check if budget is pending
-      const isPending = (status) => {
-        return status === 'pendente' || status === 'pending' || !status || status === '' || status === null || status === undefined;
-      };
       
       // Only cancel if the budget is in pending status
       if (!isPending(budgetToCancel.status)) {

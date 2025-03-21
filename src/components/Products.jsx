@@ -308,30 +308,32 @@ function Products() {
 
   const updateScreenPremiumAreaMinima = async () => {
     try {
-      // Find the SCREEN 0,5 PREMIUM product
-      const screenPremiumProduct = products.find(
+      // Find the SCREEN 0,5 PREMIUM product and PARIS BK product
+      const specialMinAreaProducts = products.filter(
         product => product.nome === 'SCREEN 0,5 PREMIUM' || 
-                  product.nome === 'SCREEN 0.5 PREMIUM'
+                  product.nome === 'SCREEN 0.5 PREMIUM' ||
+                  product.nome === 'PARIS BK'
       );
       
-      if (screenPremiumProduct) {
+      // Process each product that needs a minimum area of 1.5m²
+      specialMinAreaProducts.forEach(product => {
         const targetMinArea = 1.5;
         const needsUpdate = 
-          screenPremiumProduct.area_minima !== targetMinArea ||
-          Math.abs(parseFloat(screenPremiumProduct.largura_minima) * parseFloat(screenPremiumProduct.altura_minima) - targetMinArea) > 0.01;
+          product.area_minima !== targetMinArea ||
+          Math.abs(parseFloat(product.largura_minima) * parseFloat(product.altura_minima) - targetMinArea) > 0.01;
           
         if (needsUpdate) {
-          console.log('Updating SCREEN 0,5 PREMIUM minimum values:');
-          console.log('- area_minima from', screenPremiumProduct.area_minima, 'to', targetMinArea);
+          console.log(`Updating ${product.nome} minimum values:`);
+          console.log('- area_minima from', product.area_minima, 'to', targetMinArea);
           
           // Calculate square dimensions for the minimum area (1.5m²)
           const minDimension = Math.sqrt(targetMinArea);
-          console.log('- largura_minima from', screenPremiumProduct.largura_minima, 'to', minDimension.toFixed(2));
-          console.log('- altura_minima from', screenPremiumProduct.altura_minima, 'to', minDimension.toFixed(2));
+          console.log('- largura_minima from', product.largura_minima, 'to', minDimension.toFixed(2));
+          console.log('- altura_minima from', product.altura_minima, 'to', minDimension.toFixed(2));
           
           // Update the product with the new minimum values
           const updatedProduct = {
-            ...screenPremiumProduct,
+            ...product,
             area_minima: targetMinArea,
             largura_minima: minDimension,
             altura_minima: minDimension
@@ -355,14 +357,14 @@ function Products() {
           };
           
           // Update the product in the database
-          await produtoService.update(screenPremiumProduct.id, formattedProduct);
+          produtoService.update(product.id, formattedProduct);
           
           // Refresh the products list
           loadProducts();
         }
-      }
+      });
     } catch (error) {
-      console.error('Error updating SCREEN 0,5 PREMIUM:', error);
+      console.error('Error updating SCREEN 0,5 PREMIUM and PARIS BK:', error);
     }
   };
 

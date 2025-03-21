@@ -19,6 +19,7 @@ function BudgetDetailsPage({ companyLogo }) {
 
   console.log('BudgetDetailsPage rendered with budgetId:', budgetId);
 
+  // O carregamento inicial dos dados do orçamento
   useEffect(() => {
     if (!budgetId) {
       console.error('No budgetId provided');
@@ -31,6 +32,8 @@ function BudgetDetailsPage({ companyLogo }) {
     const loadBudgetDetails = async () => {
       try {
         console.log('Loading budget details for ID:', budgetId);
+        
+        // Buscar o orçamento com join para informações do cliente
         const { data: budgetData, error: budgetError } = await supabase
           .from('orcamentos')
           .select(`
@@ -43,19 +46,43 @@ function BudgetDetailsPage({ companyLogo }) {
               address
             )
           `)
-          .eq('id', budgetId);
+          .eq('id', budgetId)
+          .maybeSingle();
 
         if (budgetError) throw budgetError;
         
-        // Make sure we get the first result if multiple rows are returned
-        const budgetItem = budgetData && budgetData.length > 0 ? budgetData[0] : null;
-        
-        if (!budgetItem) {
-          console.error('Budget not found');
+        if (!budgetData) {
+          console.error('Orçamento não encontrado ou excluído da base de dados');
+          setError('Orçamento não encontrado ou foi excluído da base de dados. Por favor, verifique na lista de orçamentos.');
+          setLoading(false);
           return;
         }
 
-        console.log('Budget data loaded:', budgetItem);
+        console.log('Budget data loaded:', budgetData);
+        
+        // Verificar se o cliente do orçamento existe
+        if (!budgetData.clientes || !budgetData.clientes.id) {
+          console.log('Cliente não encontrado no orçamento ou ID do cliente não informado');
+          
+          // Se o orçamento tem um cliente_id, mas o join não retornou dados do cliente,
+          // buscar o cliente diretamente
+          if (budgetData.cliente_id) {
+            console.log('Tentando buscar o cliente ID:', budgetData.cliente_id);
+            const { data: customerData, error: customerError } = await supabase
+              .from('clientes')
+              .select('*')
+              .eq('id', budgetData.cliente_id)
+              .maybeSingle();
+              
+            if (!customerError && customerData) {
+              console.log('Cliente encontrado separadamente:', customerData);
+              // Atualizar o orçamento com os dados do cliente
+              budgetData.clientes = customerData;
+            } else {
+              console.error('Erro ao buscar cliente ou cliente não encontrado:', customerError);
+            }
+          }
+        }
         
         // Carregar os acessórios
         const { data: accessoriesData, error: accessoriesError } = await supabase
@@ -73,12 +100,12 @@ function BudgetDetailsPage({ companyLogo }) {
         if (productsError) throw productsError;
         console.log('Products data loaded:', productsData);
 
-        setBudget(budgetItem);
+        setBudget(budgetData);
         setProducts(productsData);
         setAccessories(accessoriesData);
       } catch (error) {
         console.error('Error loading budget details:', error);
-        setError(error.message);
+        setError(`Erro ao carregar detalhes do orçamento: ${error.message}`);
       } finally {
         setLoading(false);
       }
@@ -89,7 +116,7 @@ function BudgetDetailsPage({ companyLogo }) {
         const { data, error } = await supabase
           .from('configuracoes')
           .select('*');
-
+        
         if (error) throw error;
         
         // Use the first configuration item if multiple rows are returned
@@ -106,6 +133,51 @@ function BudgetDetailsPage({ companyLogo }) {
     loadCompanyData();
     loadBudgetDetails();
   }, [budgetId]);
+
+  // Configurar listener para mudanças nos clientes em um useEffect separado
+  useEffect(() => {
+    if (!budget || !budget.cliente_id) return;
+    
+    console.log('Configurando listener para cliente ID:', budget.cliente_id);
+    
+    const customersSubscription = supabase
+      .channel('clientes_changes_details')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'clientes' 
+        }, 
+        (payload) => {
+          console.log('Cliente modificado:', payload);
+          
+          // Verificar se a alteração afeta o cliente deste orçamento
+          if (payload.new && payload.new.id === budget.cliente_id) {
+            console.log('Atualizando cliente do orçamento atual');
+            
+            // Se foi uma atualização ou inserção, atualiza o cliente no orçamento
+            if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+              setBudget(prev => ({
+                ...prev,
+                clientes: payload.new
+              }));
+            } 
+            // Se foi uma exclusão, limpa o cliente do orçamento
+            else if (payload.eventType === 'DELETE') {
+              setBudget(prev => ({
+                ...prev,
+                clientes: null
+              }));
+            }
+          }
+        }
+      )
+      .subscribe();
+      
+    return () => {
+      customersSubscription.unsubscribe();
+    };
+  }, [budget?.cliente_id]); // Depende apenas do ID do cliente no orçamento
 
   const formatCurrency = (value) => {
     return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -134,10 +206,23 @@ function BudgetDetailsPage({ companyLogo }) {
     return description;
   };
 
+  // This function gets the name of an accessory by its ID
   const getAccessoryName = (accessoryId) => {
-    if (!accessories || !accessoryId) return 'Acessório não encontrado';
-    const accessory = accessories.find(a => a.id === accessoryId);
-    return accessory ? accessory.name : 'Acessório não encontrado';
+    if (!accessories || !accessoryId) return 'Acessório não encontrado (ID inválido)';
+    
+    // Convert IDs to strings for comparison (if they might be different types)
+    const accessoryIdStr = String(accessoryId);
+    console.log('Looking for accessory ID:', accessoryIdStr);
+    console.log('Available accessories:', accessories);
+    
+    const accessory = accessories.find(a => String(a.id) === accessoryIdStr);
+    if (!accessory) {
+      console.log('Accessory not found by ID:', accessoryIdStr);
+      // Retornar uma mensagem mais informativa incluindo o ID que não foi encontrado
+      return `Acessório não encontrado (ID: ${accessoryIdStr}). Verifique se foi excluído.`;
+    }
+    
+    return accessory.name || 'Acessório sem nome';
   };
 
   const calculateValidadeDate = (createdAt, validadeDias) => {
@@ -188,6 +273,27 @@ function BudgetDetailsPage({ companyLogo }) {
     doc.save(`orcamento_${budgetId}.pdf`);
   };
 
+  const renderCustomerInfo = () => {
+    if (!budget || !budget.clientes) {
+      return (
+        <div className="customer-info">
+          <h3>Cliente</h3>
+          <p>Cliente não encontrado ou foi removido</p>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="customer-info">
+        <h3>Cliente</h3>
+        <p>Nome: {budget.clientes.name}</p>
+        <p>Endereço: {budget.clientes.address || 'Não informado'}</p>
+        <p>Telefone: {budget.clientes.phone || 'Não informado'}</p>
+        <p>Email: {budget.clientes.email || 'Não informado'}</p>
+      </div>
+    );
+  };
+
   if (loading) return <p>Carregando...</p>;
   if (error) return <p>Erro: {error}</p>;
   if (!budget) return <p>Orçamento não encontrado.</p>;
@@ -202,6 +308,25 @@ function BudgetDetailsPage({ companyLogo }) {
     budgetAccessories = JSON.parse(budget.acessorios_json || '[]');
     console.log('Raw accessories JSON:', budget.acessorios_json);
     console.log('Parsed accessories:', budgetAccessories);
+    
+    // Log each accessory ID for debugging
+    if (budgetAccessories.length > 0) {
+      console.log('Accessory IDs in budget:', budgetAccessories.map(a => {
+        return {
+          id: a.accessory_id,
+          id_type: typeof a.accessory_id
+        };
+      }));
+      
+      // Log each accessory in the loaded accessories array
+      console.log('Available accessory IDs:', accessories.map(a => {
+        return {
+          id: a.id, 
+          id_type: typeof a.id,
+          name: a.name
+        };
+      }));
+    }
   } catch (e) {
     console.error('Error parsing accessories:', e);
   }
@@ -247,12 +372,7 @@ function BudgetDetailsPage({ companyLogo }) {
           <p>Válido até: {calculateValidadeDate(budget.created_at, companyData?.validade_orcamento || 7)}</p>
         </div>
 
-        <div className="client-section">
-          <h3>Cliente</h3>
-          <p>Nome: {budget.clientes.name}</p>
-          <p>Endereço: {budget.clientes.address}</p>
-          <p>Telefone: {budget.clientes.phone}</p>
-        </div>
+        {renderCustomerInfo()}
 
         <div className="budget-items">
           <h3>Itens do Orçamento</h3>

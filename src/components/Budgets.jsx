@@ -300,7 +300,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     let minArea = parseFloat(product.area_minima) || 0;
     
     // Special case for SCREEN 0,5 PREMIUM - ensure it has the correct minimum area
-    if (product.nome === 'SCREEN 0,5 PREMIUM' || product.nome === 'SCREEN 0.5 PREMIUM') {
+    if (product.nome === 'SCREEN 0,5 PREMIUM' || product.nome === 'SCREEN 0.5 PREMIUM' || product.nome === 'PARIS BK') {
       minArea = 1.5;
       
       // Calculate minimum dimensions based on the correct minimum area
@@ -692,11 +692,16 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     setCurrentAccessory(prev => {
       const updated = { ...prev, [name]: value };
       
-      if (updated.accessory && updated.color && updated.quantity) {
-        const quantity = parseInt(updated.quantity, 10) || 1;
+      if (updated.accessory && updated.color) {
+        // Usar parseFloat para permitir valores decimais (medidas em metros)
+        const quantity = parseFloat(updated.quantity) || 1;
         const color = updated.accessory.colors.find(c => c.color === updated.color);
+        
         if (color) {
-          updated.subtotal = quantity * (parseFloat(color.sale_price) || 0);
+          const price = parseFloat(color.sale_price) || 0;
+          // Multiplicar explicitamente o preço pela quantidade (que pode ser decimal)
+          updated.subtotal = quantity * price;
+          console.log(`Calculando subtotal do acessório: ${quantity} x R$${price} = R$${updated.subtotal}`);
         }
       }
       
@@ -705,9 +710,10 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
   };
 
   const calculateAccessorySubtotal = () => {
-    if (!currentAccessory.accessory || !currentAccessory.color || !currentAccessory.quantity) return;
+    if (!currentAccessory.accessory || !currentAccessory.color) return;
 
-    const quantity = parseInt(currentAccessory.quantity, 10) || 1;
+    // Usar parseFloat para permitir valores decimais (medidas em metros)
+    const quantity = parseFloat(currentAccessory.quantity) || 1;
     const color = currentAccessory.accessory.colors.find(c => c.color === currentAccessory.color);
 
     if (!color) {
@@ -715,15 +721,46 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       return;
     }
 
-    const subtotal = quantity * (parseFloat(color.sale_price) || 0);
-    setCurrentAccessory(prev => ({ ...prev, subtotal }));
+    const price = parseFloat(color.sale_price) || 0;
+    const subtotal = quantity * price;
+    console.log(`Calculando subtotal do acessório: ${quantity} x R$${price} = R$${subtotal}`);
+    
+    setCurrentAccessory(prev => ({ ...prev, quantity, subtotal }));
   };
 
   const handleCustomerChange = (selectedCustomer) => {
-    setNewBudget(prev => ({
-      ...prev,
-      customer: selectedCustomer
-    }));
+    console.log('Cliente selecionado:', selectedCustomer);
+    
+    if (!selectedCustomer) {
+      setNewBudget(prev => ({ ...prev, customer: null }));
+      return;
+    }
+    
+    // Se temos apenas o ID do cliente, vamos buscar os dados completos
+    if (selectedCustomer.id && (!selectedCustomer.name || !selectedCustomer.email || !selectedCustomer.phone)) {
+      console.log('Buscando dados completos do cliente:', selectedCustomer.id);
+      
+      // Buscar cliente completo do Supabase
+      supabase
+        .from('clientes')
+        .select('*')
+        .eq('id', selectedCustomer.id)
+        .single()
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Erro ao buscar cliente completo:', error);
+            return;
+          }
+          
+          if (data) {
+            console.log('Dados completos do cliente encontrados:', data);
+            setNewBudget(prev => ({ ...prev, customer: data }));
+          }
+        });
+    } else {
+      // Já temos todos os dados do cliente
+      setNewBudget(prev => ({ ...prev, customer: selectedCustomer }));
+    }
   };
 
   const handleCreateCustomer = async (name) => {
@@ -790,17 +827,48 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       
       if (error) throw error;
       
-      if (data) {
+      if (data && data.length > 0) {
         console.log('Fetched accessories:', data);
         setAccessoriesList(data);
       } else {
+        console.log('Nenhum acessório encontrado');
         setAccessoriesList([]);
+        setError('Nenhum acessório cadastrado. Adicione acessórios na seção de Acessórios primeiro.');
+        setTimeout(() => setError(null), 5000); // Limpa a mensagem após 5 segundos
       }
     } catch (error) {
       console.error('Error fetching accessories:', error);
-      setError('Erro ao carregar acessórios');
+      setError('Erro ao carregar acessórios: ' + error.message);
+      setTimeout(() => setError(null), 5000); // Limpa a mensagem após 5 segundos
     }
   };
+
+  useEffect(() => {
+    // Primeiro, carregue os acessórios
+    fetchAccessories();
+    
+    // Em seguida, configure um listener em tempo real
+    const accessoriesSubscription = supabase
+      .channel('accessories_changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', // Escuta todos os eventos (INSERT, UPDATE, DELETE)
+          schema: 'public', 
+          table: 'accessories' 
+        }, 
+        (payload) => {
+          console.log('Detected change in accessories:', payload);
+          // Recarrega todos os acessórios quando houver qualquer alteração
+          fetchAccessories();
+        }
+      )
+      .subscribe();
+
+    // Limpar o listener quando o componente for desmontado
+    return () => {
+      accessoriesSubscription.unsubscribe();
+    };
+  }, []);
 
   const handleAddProduct = () => {
     if (!currentProduct.product) {
@@ -890,12 +958,30 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
   };
 
   const handleAddAccessory = () => {
-    if (!currentAccessory.accessory || !currentAccessory.color || !currentAccessory.quantity) {
-      setError("Por favor, preencha todos os campos do acessório.");
+    if (!currentAccessory.accessory || !currentAccessory.color) {
+      setError("Por favor, selecione um acessório e uma cor.");
       return;
     }
 
-    const updatedAccessories = [...newBudget.accessories, { ...currentAccessory }];
+    // Usar parseFloat para permitir valores decimais (medidas em metros)
+    const quantity = parseFloat(currentAccessory.quantity) || 1;
+    
+    // Recalcular o subtotal para garantir consistência
+    const color = currentAccessory.accessory.colors.find(c => c.color === currentAccessory.color);
+    let subtotal = currentAccessory.subtotal;
+    
+    if (color) {
+      const price = parseFloat(color.sale_price) || 0;
+      subtotal = quantity * price;
+    }
+    
+    const accessoryToAdd = {
+      ...currentAccessory,
+      quantity,
+      subtotal
+    };
+
+    const updatedAccessories = [...newBudget.accessories, accessoryToAdd];
 
     const productsTotal = newBudget.products.reduce((sum, prod) => sum + (prod.subtotal || 0), 0);
     const accessoriesTotal = updatedAccessories.reduce((sum, acc) => sum + (acc.subtotal || 0), 0);
@@ -992,7 +1078,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       const cleanAccessories = newBudget.accessories.map(accessory => ({
         accessory_id: accessory.accessory.id,
         color: accessory.color,
-        quantity: parseInt(accessory.quantity, 10),
+        quantity: parseFloat(accessory.quantity), // Usar parseFloat para permitir valores decimais
         subtotal: accessory.subtotal
       }));
 
@@ -1323,9 +1409,9 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
             <SelectOrCreate
               options={filteredProducts}
               value={currentProduct.product}
-              onChange={handleProductChange}
               labelKey="nome"
               valueKey="id"
+              onChange={handleProductChange}
               onCreate={fetchAccessories}
               showCreate={false}
             />
@@ -1451,11 +1537,12 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
 
                   <input
                     type="number"
+                    step="0.01"
                     name="quantity"
                     value={currentAccessory.quantity}
                     onChange={handleAccessoryInputChange}
                     placeholder="Quantidade"
-                    min="1"
+                    min="0.01"
                   />
                 </div>
 

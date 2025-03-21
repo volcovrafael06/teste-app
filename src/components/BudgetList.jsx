@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { supabase } from '../supabase/client';
 import './BudgetList.css';
 
 function BudgetList({ budgets, validadeOrcamento, onFinalizeBudget, onCancelBudget, onReactivateBudget }) {
@@ -8,36 +9,69 @@ function BudgetList({ budgets, validadeOrcamento, onFinalizeBudget, onCancelBudg
   const queryParams = new URLSearchParams(location.search);
   const [filter, setFilter] = useState(queryParams.get('filter') || 'all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [localBudgets, setLocalBudgets] = useState([]);
 
   const today = new Date();
   const currentMonth = today.getMonth();
   const currentYear = today.getFullYear();
-
-  const filteredBudgets = budgets
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    .filter(budget => {
-      if (filter === 'monthly') {
-        const budgetDate = new Date(budget.created_at);
-        return budgetDate.getMonth() === currentMonth && budgetDate.getFullYear() === currentYear;
-      } else if (filter === 'finalized') {
-        return budget.status === 'finalizado';
-      } else if (filter === 'pending') {
-        return budget.status === 'pendente';
-      } else if (filter === 'canceled') {
-        return budget.status === 'cancelado';
-      }
-      return true;
-    })
-    .filter(budget => {
-      const customerName = budget.clientes?.name || '';
-      return customerName.toUpperCase().includes(searchTerm.toUpperCase());
-    });
 
   // Helper function to check if a budget status is pending
   const isPending = (status) => {
     // Check for all possible pending status variations
     return status === 'pendente' || status === 'pending' || !status || status === '' || status === null || status === undefined;
   };
+
+  // Carregar dados completos dos orçamentos com informações de clientes
+  useEffect(() => {
+    const loadBudgetsWithCustomers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('orcamentos')
+          .select(`
+            *,
+            clientes (
+              id,
+              name,
+              email,
+              phone,
+              address
+            )
+          `);
+          
+        if (error) {
+          console.error('Erro ao carregar orçamentos com clientes:', error);
+          return;
+        }
+        
+        console.log('Orçamentos com clientes carregados:', data.length);
+        setLocalBudgets(data);
+      } catch (err) {
+        console.error('Erro ao processar orçamentos:', err);
+      }
+    };
+    
+    loadBudgetsWithCustomers();
+    
+    // Configurar listener para mudanças nos clientes
+    const clientesSubscription = supabase
+      .channel('clientes_changes_budgetlist')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'clientes' 
+        }, 
+        () => {
+          // Recarregar os orçamentos quando houver mudanças nos clientes
+          loadBudgetsWithCustomers();
+        }
+      )
+      .subscribe();
+      
+    return () => {
+      clientesSubscription.unsubscribe();
+    };
+  }, []);
 
   const calculateExpirationDate = (creationDate, validadeOrcamento) => {
     const creation = new Date(creationDate);
@@ -54,6 +88,48 @@ function BudgetList({ budgets, validadeOrcamento, onFinalizeBudget, onCancelBudg
   const formatDate = (date) => {
     return new Date(date).toLocaleDateString();
   };
+
+  const getCustomerDisplayName = (budget) => {
+    // Se o cliente existe e tem nome, exibe o nome
+    if (budget.clientes && budget.clientes.name) {
+      return budget.clientes.name;
+    }
+    
+    // Se não tem cliente mas tem cliente_id, indica que o cliente existe mas o join falhou
+    if (budget.cliente_id && !budget.clientes) {
+      return 'Carregando cliente...';
+    }
+    
+    // Se não tem cliente_id ou se cliente_id é null/undefined
+    return 'Cliente não encontrado';
+  };
+
+  // Usar os orçamentos do estado local (que têm info completa de clientes) ou os passados por props
+  const budgetsToUse = localBudgets.length > 0 ? localBudgets : budgets;
+
+  const filteredBudgets = budgetsToUse
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .filter(budget => {
+      if (filter === 'monthly') {
+        const budgetDate = new Date(budget.created_at);
+        return budgetDate.getMonth() === currentMonth && budgetDate.getFullYear() === currentYear;
+      } else if (filter === 'pending') {
+        return isPending(budget.status);
+      } else if (filter === 'finalized') {
+        return budget.status === 'finalizado';
+      } else if (filter === 'canceled') {
+        return budget.status === 'cancelado';
+      }
+      return true;
+    })
+    .filter(budget => {
+      // Se não houver termo de busca, retorna todos
+      if (!searchTerm.trim()) return true;
+      
+      // Se o cliente não existir, considere apenas "Cliente não encontrado" para pesquisa
+      const customerName = budget.clientes?.name || 'Cliente não encontrado';
+      return customerName.toUpperCase().includes(searchTerm.toUpperCase());
+    });
 
   return (
     <div>
@@ -93,6 +169,12 @@ function BudgetList({ budgets, validadeOrcamento, onFinalizeBudget, onCancelBudg
             >
               Cancelados
             </button>
+            <button 
+              className={`filter-button ${filter === 'monthly' ? 'active' : ''}`}
+              onClick={() => setFilter('monthly')}
+            >
+              Mensal
+            </button>
           </div>
         </div>
 
@@ -112,7 +194,7 @@ function BudgetList({ budgets, validadeOrcamento, onFinalizeBudget, onCancelBudg
               <tbody>
                 {filteredBudgets.map(budget => (
                   <tr key={budget.id}>
-                    <td>{budget.clientes?.name || 'Cliente não encontrado'}</td>
+                    <td data-component-name="BudgetList">{getCustomerDisplayName(budget)}</td>
                     <td>
                       {budget.valor_negociado ? (
                         <div>
@@ -154,7 +236,7 @@ function BudgetList({ budgets, validadeOrcamento, onFinalizeBudget, onCancelBudg
                       {(isPending(budget.status)) && (
                         <>
                           {/* Debug display - remove after testing */}
-                          {console.log(`Budget ${budget.id} has status: "${budget.status}" - shows Pending Buttons`)}
+                          {/* {console.log(`Budget ${budget.id} has status: "${budget.status}" - shows Pending Buttons`)} */}
                           <button
                             onClick={() => onFinalizeBudget(budget.id)}
                             className="action-button finalize-button"
