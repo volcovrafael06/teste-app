@@ -6,7 +6,7 @@ import Budgets from './components/Budgets';
 import Customers from './components/Customers';
 import Products from './components/Products';
 import Accessories from './components/Accessories';
-import Reports from './components/Reports';
+import ReportsNew from './components/ReportsNew';
 import Login from './components/Login';
 import Configuracoes from './components/Configuracoes';
 import BudgetList from './components/BudgetList';
@@ -694,7 +694,7 @@ function App() {
             path="/reports" 
             element={
               <ErrorBoundary>
-                <Reports budgets={budgets} customers={customers} />
+                <ReportsNew budgets={budgets} customers={customers} />
               </ErrorBoundary>
             }
           />

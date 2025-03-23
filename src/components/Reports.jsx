@@ -41,6 +41,7 @@ function Reports({ budgets: initialBudgets }) {
     revenue: true,
     products: true
   });
+  const [produtos, setProdutos] = useState([]);
   
   // Usar useMemo para o defaultChartData para evitar recriação a cada renderização
   const defaultChartData = useMemo(() => ({
@@ -115,11 +116,33 @@ function Reports({ budgets: initialBudgets }) {
     topProductsData: defaultChartData.topProductsData
   });
 
+  // Buscar produtos do catálogo
+  const fetchProdutos = useCallback(async () => {
+    try {
+      console.log('Buscando produtos do catálogo');
+      const { data, error } = await supabase
+        .from('produtos')
+        .select('*');
+        
+      if (error) {
+        console.error('Erro ao buscar produtos:', error);
+        return;
+      }
+      
+      if (data && Array.isArray(data)) {
+        console.log(`${data.length} produtos encontrados no catálogo`);
+        setProdutos(data);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar produtos:', error);
+    }
+  }, []);
+
   // Função para buscar orçamentos
   const fetchBudgetsData = useCallback(async () => {
     try {
       setLoading(true);
-      console.log('Iniciando busca de orçamentos - VERSÃO SIMPLIFICADA');
+      console.log('Iniciando busca de orçamentos - VERSÃO DETALHADA');
       
       // Se já temos orçamentos iniciais, usá-los diretamente
       if (initialBudgets && initialBudgets.length > 0) {
@@ -151,12 +174,432 @@ function Reports({ budgets: initialBudgets }) {
     }
   }, [initialBudgets]);
 
-  // Buscar orçamentos quando o componente montar
+  // Buscar dados quando o componente montar
   useEffect(() => {
+    console.log('Inicializando componente Reports');
+    fetchProdutos();
     fetchBudgetsData();
-  }, [fetchBudgetsData]);
+  }, [fetchProdutos, fetchBudgetsData]);
 
-  // Função para aplicar filtros de data - versão simplificada
+  // Função para calcular dimensões do produto
+  const calcularDimensoes = useCallback((product, width, height) => {
+    try {
+      if (!product || !width || !height) {
+        console.warn('Dados incompletos para calcular dimensões');
+        return null;
+      }
+      
+      console.log('Calculando dimensões: ', { product, width, height });
+      
+      // Extrair mínimos do produto
+      const minWidth = parseFloat(product.largura_minima || product.min_width || 0.5);
+      const minHeight = parseFloat(product.altura_minima || product.min_height || 0.5);
+      
+      // Converter e validar dimensões
+      const widthValue = parseFloat(width);
+      const heightValue = parseFloat(height);
+      
+      if (isNaN(widthValue) || isNaN(heightValue)) {
+        console.warn('Dimensões inválidas');
+        return null;
+      }
+      
+      // Verificar se precisa usar mínimos
+      const usedWidth = widthValue < minWidth ? minWidth : widthValue;
+      const usedHeight = heightValue < minHeight ? minHeight : heightValue;
+      const usedMinimum = usedWidth !== widthValue || usedHeight !== heightValue;
+      
+      // Calcular área
+      const area = usedWidth * usedHeight;
+      
+      const result = {
+        width: usedWidth,
+        height: usedHeight,
+        area,
+        usedMinimum,
+        minimos: { width: minWidth, height: minHeight },
+        originais: { width: widthValue, height: heightValue }
+      };
+      
+      console.log('Dimensões calculadas: ', result);
+      return result;
+    } catch (error) {
+      console.error('Erro ao calcular dimensões:', error);
+      return null;
+    }
+  }, []);
+
+  // Função para calcular preço baseado em dimensões
+  const calcularPreco = useCallback((product, dimensions) => {
+    try {
+      if (!product || !dimensions) {
+        console.warn('Dados incompletos para calcular preço');
+        return null;
+      }
+      
+      const { width, height, area } = dimensions;
+      
+      // Obter preços do produto
+      const precoCusto = parseFloat(product.preco_custo || product.cost_price || 0);
+      const precoVenda = parseFloat(product.preco_venda || product.sale_price || 0);
+      
+      // Verificar método de cálculo
+      const metodoCalculo = product.metodo_calculo || product.calculation_method || 'Área';
+      
+      let custoFinal = 0;
+      let valorFinal = 0;
+      let formula = '';
+      
+      if (metodoCalculo === 'Metro Quadrado (m²)' || metodoCalculo === 'Área') {
+        custoFinal = area * precoCusto;
+        valorFinal = area * precoVenda;
+        formula = 'largura * altura * preço';
+      } else if (metodoCalculo === 'Metro Linear' || metodoCalculo === 'Linear') {
+        // Considerando a largura como a dimensão linear
+        custoFinal = width * precoCusto;
+        valorFinal = width * precoVenda;
+        formula = 'largura * preço';
+      } else if (metodoCalculo === 'Unidade' || metodoCalculo === 'Unit') {
+        custoFinal = precoCusto;
+        valorFinal = precoVenda;
+        formula = 'preço fixo por unidade';
+      } else {
+        // Padrão: cálculo por área
+        custoFinal = area * precoCusto;
+        valorFinal = area * precoVenda;
+        formula = 'largura * altura * preço (padrão)';
+      }
+      
+      const result = {
+        largura: width,
+        altura: height,
+        preco_custo: precoCusto,
+        preco_venda: precoVenda,
+        custo_final: custoFinal,
+        valor_final: valorFinal,
+        formula
+      };
+      
+      console.log('Cálculo Padrão: ', result);
+      return result;
+    } catch (error) {
+      console.error('Erro ao calcular preço:', error);
+      return null;
+    }
+  }, []);
+
+  // Função para calcular custos de um item do orçamento
+  const calcularCustoItem = useCallback((item, produtos) => {
+    try {
+      if (!item) {
+        console.warn('Item inválido para cálculo de custo');
+        return null;
+      }
+      
+      console.log('Calculando custo para produto: ', item);
+      
+      // Encontrar o produto no catálogo
+      let produtoCatalogo = null;
+      if (produtos && Array.isArray(produtos) && item.produto_id) {
+        produtoCatalogo = produtos.find(p => p.id === item.produto_id);
+        if (produtoCatalogo) {
+          console.log('Dados do produto encontrado: ', produtoCatalogo);
+        }
+      }
+      
+      // Obter dimensões
+      const largura = parseFloat(item.largura || item.width || 0);
+      const altura = parseFloat(item.altura || item.height || 0);
+      
+      // Calcular dimensões
+      const dimensions = calcularDimensoes(
+        produtoCatalogo || { 
+          largura_minima: 0.5, 
+          altura_minima: 0.5
+        }, 
+        largura, 
+        altura
+      );
+      
+      if (!dimensions) {
+        console.warn('Não foi possível calcular dimensões');
+        return null;
+      }
+      
+      // Calcular custos do produto
+      const produtoCalculo = produtoCatalogo ? 
+        calcularPreco(produtoCatalogo, dimensions) : 
+        {
+          custo_final: parseFloat(item.valor_custo || item.cost_value || 0),
+          valor_final: parseFloat(item.valor || item.value || 0)
+        };
+      
+      // Calcular custos do bando (se existir)
+      const bandoValor = parseFloat(item.valor_bando || item.band_value || 0);
+      const bandoCusto = parseFloat(item.valor_bando_custo || item.band_cost || 0);
+      
+      // Calcular custos do trilho (se existir)
+      const trilhoValor = parseFloat(item.valor_trilho || item.rail_value || 0);
+      const trilhoCusto = parseFloat(item.trilho_custo || item.rail_cost || 0);
+      
+      const result = {
+        produto: {
+          custo: produtoCalculo ? produtoCalculo.custo_final : 0,
+          valor: produtoCalculo ? produtoCalculo.valor_final : 0
+        },
+        bando: {
+          custo: bandoCusto,
+          valor: bandoValor
+        },
+        trilho: {
+          custo: trilhoCusto,
+          valor: trilhoValor
+        }
+      };
+      
+      console.log('Custos finais calculados: ', result);
+      return result;
+    } catch (error) {
+      console.error('Erro ao calcular custos do item:', error);
+      return null;
+    }
+  }, [calcularDimensoes, calcularPreco]);
+
+  // Função para processar um orçamento completo
+  const processarOrcamento = useCallback((budget, produtos) => {
+    try {
+      if (!budget) {
+        console.warn('Orçamento inválido para processamento');
+        return null;
+      }
+      
+      console.log('Processando orçamento:', budget.id);
+      
+      // Extrair produtos do orçamento com suporte a múltiplos formatos de dados
+      let produtosOrcamento = [];
+      
+      try {
+        // Verificar todas as possíveis chaves onde os produtos podem estar armazenados
+        let rawProductData = null;
+        
+        // Verificar múltiplos formatos possíveis
+        if (budget.produtos) {
+          rawProductData = budget.produtos;
+        } else if (budget.products) {
+          rawProductData = budget.products;
+        } else if (budget.itens) {
+          rawProductData = budget.itens;
+        } else if (budget.items) {
+          rawProductData = budget.items;
+        }
+        
+        // Se encontrou algum dado, tentar parsear
+        if (rawProductData) {
+          // Converter string JSON para objeto, se necessário
+          if (typeof rawProductData === 'string') {
+            try {
+              rawProductData = JSON.parse(rawProductData);
+            } catch (e) {
+              console.error('Erro ao parsear string JSON de produtos:', e);
+            }
+          }
+          
+          // Verificar se é um array
+          if (Array.isArray(rawProductData)) {
+            produtosOrcamento = rawProductData;
+          } else if (typeof rawProductData === 'object') {
+            // Se for um objeto, tentar converter para array
+            produtosOrcamento = Object.values(rawProductData);
+          }
+        }
+        
+        // Log dos produtos encontrados
+        console.log(`Produtos encontrados no orçamento ${budget.id}:`, produtosOrcamento);
+        
+        // Garantir que é um array
+        if (!Array.isArray(produtosOrcamento)) {
+          produtosOrcamento = [];
+        }
+      } catch (e) {
+        console.error('Erro ao extrair produtos do orçamento:', e, budget);
+        produtosOrcamento = [];
+      }
+      
+      // Log para depuração
+      console.log(`Orçamento ${budget.id} - ${produtosOrcamento.length} produtos encontrados`);
+      
+      // Processar cada item do orçamento
+      const itensProcessados = produtosOrcamento.map(item => {
+        try {
+          // Determinar o ID do produto
+          const produtoId = item.produto_id || item.product_id || item.productId || item.produtoId || item.id;
+          
+          // Encontrar o produto no catálogo
+          const produtoCatalogo = produtos.find(p => p.id === produtoId);
+          
+          // Caso não encontre o produto no catálogo, usar os dados diretos do item
+          if (!produtoCatalogo) {
+            console.log(`Produto ID ${produtoId} não encontrado no catálogo para o orçamento ${budget.id}`);
+          }
+          
+          // Extrair dimensões
+          const largura = item.largura || item.width || item.dimensoes?.largura || item.dimensions?.width || 0;
+          const altura = item.altura || item.height || item.dimensoes?.altura || item.dimensions?.height || 0;
+          
+          // Calcular custos e dimensões
+          const custos = calcularCustoItem(item, produtos);
+          const dimensoes = calcularDimensoes(produtoCatalogo, largura, altura);
+          
+          return {
+            ...item,
+            custos,
+            dimensoes,
+            produtoCatalogo,
+            // Garantir que temos um nome para o produto
+            nome: item.nome || item.name || 
+                 (produtoCatalogo ? (produtoCatalogo.nome || produtoCatalogo.name) : 'Produto Sem Nome')
+          };
+        } catch (e) {
+          console.error('Erro ao processar item do orçamento:', e, item);
+          // Retornar um item com valores padrão em caso de erro
+          return {
+            ...item, 
+            custos: {
+              produto: { custo: 0, valor: 0 },
+              bando: { custo: 0, valor: 0 },
+              trilho: { custo: 0, valor: 0 }
+            },
+            dimensoes: { width: 0, height: 0, area: 0 },
+            nome: item.nome || item.name || 'Produto com erro'
+          };
+        }
+      });
+      
+      // Calcular totais
+      let totalCost = 0;
+      let totalValue = 0;
+      let installationFee = 0;
+      
+      // Verificar se temos produtos processados
+      if (itensProcessados.length > 0) {
+        console.log(`Processando ${itensProcessados.length} itens para orçamento ${budget.id}`);
+        itensProcessados.forEach(item => {
+          if (item.custos) {
+            // Somar custos do produto, bando e trilho
+            totalCost += (item.custos.produto.custo || 0) + 
+                        (item.custos.bando.custo || 0) + 
+                        (item.custos.trilho.custo || 0);
+            
+            // Somar valores do produto, bando e trilho
+            totalValue += (item.custos.produto.valor || 0) + 
+                          (item.custos.bando.valor || 0) + 
+                          (item.custos.trilho.valor || 0);
+          }
+          
+          // Verificar se tem instalação
+          const temInstalacao = item.instalacao === true || 
+                                item.instalacao === 'true' || 
+                                item.instalacao === 1 ||
+                                item.installation === true || 
+                                item.installation === 'true' ||
+                                item.installation === 1;
+                            
+          if (temInstalacao) {
+            const valorInstalacao = parseFloat(
+              item.valor_instalacao || 
+              item.installation_value || 
+              item.installationValue || 
+              item.valorInstalacao || 
+              0
+            );
+            installationFee += valorInstalacao;
+          }
+        });
+      } else {
+        console.log(`Sem itens processados, usando valores diretos do orçamento ${budget.id}`);
+        // FALLBACK: Se não conseguirmos processar os produtos, usar os valores diretos do orçamento
+        totalValue = parseFloat(budget.total_price || 
+                               budget.totalValue || 
+                               budget.valor_total || 
+                               budget.total || 
+                               0);
+                               
+        // Estimar custo como 70% do valor se não estiver disponível
+        totalCost = parseFloat(budget.total_cost || 
+                              budget.totalCost || 
+                              budget.custo_total || 
+                              0) || (totalValue * 0.7);
+                              
+        // Verificar se há taxa de instalação definida no orçamento
+        installationFee = parseFloat(budget.installation_fee || 
+                                   budget.installationFee || 
+                                   budget.taxa_instalacao || 
+                                   0);
+      }
+      
+      // Calcular valor sem instalação e lucro
+      const valueWithoutInstallation = totalValue;
+      const profit = valueWithoutInstallation - totalCost;
+      const margin = valueWithoutInstallation > 0 ? (profit / valueWithoutInstallation) * 100 : 0;
+      
+      const result = {
+        ...budget,
+        itensProcessados,
+        totalCost,
+        totalValue,
+        installationFee,
+        valueWithoutInstallation,
+        profit,
+        margin
+      };
+      
+      console.log('Totais calculados para orçamento ' + budget.id + ':', {
+        totalCost,
+        totalValue,
+        installationFee,
+        valueWithoutInstallation,
+        profit,
+        margin
+      });
+      
+      return result;
+    } catch (error) {
+      console.error('Erro ao processar orçamento:', error, budget);
+      
+      // FALLBACK de segurança em caso de erro
+      const totalValue = parseFloat(budget.total_price || 
+                                   budget.totalValue || 
+                                   budget.valor_total || 
+                                   budget.total || 
+                                   0);
+                               
+      const totalCost = parseFloat(budget.total_cost || 
+                                  budget.totalCost || 
+                                  budget.custo_total || 
+                                  0) || (totalValue * 0.7);
+                          
+      const installationFee = parseFloat(budget.installation_fee || 
+                                       budget.installationFee || 
+                                       budget.taxa_instalacao || 
+                                       0);
+                          
+      const profit = totalValue - totalCost - installationFee;
+      const margin = totalValue > 0 ? (profit / totalValue) * 100 : 0;
+      
+      return {
+        ...budget,
+        itensProcessados: [],
+        totalCost,
+        totalValue,
+        installationFee,
+        valueWithoutInstallation: totalValue,
+        profit,
+        margin
+      };
+    }
+  }, [calcularCustoItem, calcularDimensoes]);
+
+  // Função para aplicar filtros de data - versão detalhada
   const getFilteredBudgetsByDate = useCallback((budgetsData) => {
     if (!budgetsData || !Array.isArray(budgetsData)) return [];
     
@@ -166,16 +609,26 @@ function Reports({ budgets: initialBudgets }) {
       end.setHours(23, 59, 59); // Incluir todo o dia final
       
       return budgetsData.filter(budget => {
-        const budgetDate = new Date(budget.created_at);
-        return budgetDate >= start && budgetDate <= end;
+        try {
+          const budgetDate = new Date(budget.created_at);
+          return budgetDate >= start && budgetDate <= end;
+        } catch (e) {
+          console.error('Erro ao filtrar orçamento por data:', e);
+          return false;
+        }
       });
     } else if (period === 'monthly') {
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       
       return budgetsData.filter(budget => {
-        const budgetDate = new Date(budget.created_at);
-        return budgetDate >= startOfMonth;
+        try {
+          const budgetDate = new Date(budget.created_at);
+          return budgetDate >= startOfMonth;
+        } catch (e) {
+          console.error('Erro ao filtrar orçamento por mês:', e);
+          return false;
+        }
       });
     } else if (period === 'quarterly') {
       const now = new Date();
@@ -183,16 +636,26 @@ function Reports({ budgets: initialBudgets }) {
       const startOfQuarter = new Date(now.getFullYear(), currentQuarter * 3, 1);
       
       return budgetsData.filter(budget => {
-        const budgetDate = new Date(budget.created_at);
-        return budgetDate >= startOfQuarter;
+        try {
+          const budgetDate = new Date(budget.created_at);
+          return budgetDate >= startOfQuarter;
+        } catch (e) {
+          console.error('Erro ao filtrar orçamento por trimestre:', e);
+          return false;
+        }
       });
     } else if (period === 'yearly') {
       const now = new Date();
       const startOfYear = new Date(now.getFullYear(), 0, 1);
       
       return budgetsData.filter(budget => {
-        const budgetDate = new Date(budget.created_at);
-        return budgetDate >= startOfYear;
+        try {
+          const budgetDate = new Date(budget.created_at);
+          return budgetDate >= startOfYear;
+        } catch (e) {
+          console.error('Erro ao filtrar orçamento por ano:', e);
+          return false;
+        }
       });
     } else if (period === 'all') {
       return budgetsData;
@@ -201,16 +664,17 @@ function Reports({ budgets: initialBudgets }) {
     return budgetsData;
   }, [period, startDate, endDate]);
 
-  // Função para gerar dados do gráfico de status - simplificada
+  // Função para gerar dados do gráfico de status - versão detalhada
   const generateStatusChartData = useCallback((filteredBudgets) => {
     try {
-      if (!filteredBudgets || filteredBudgets.length === 0) {
+      if (!filteredBudgets || !Array.isArray(filteredBudgets) || filteredBudgets.length === 0) {
+        console.log('Nenhum orçamento disponível para gerar dados de status chart');
         return defaultChartData.statusChartData;
       }
       
-      const finalized = filteredBudgets.filter(b => b.status === 'finalizado' || b.status === 'finalized').length;
-      const pending = filteredBudgets.filter(b => !b.status || b.status === 'pendente' || b.status === 'pending').length;
-      const canceled = filteredBudgets.filter(b => b.status === 'cancelado' || b.status === 'canceled').length;
+      const finalized = filteredBudgets.filter(b => b && (b.status === 'finalizado' || b.status === 'finalized')).length;
+      const pending = filteredBudgets.filter(b => b && (!b.status || b.status === 'pendente' || b.status === 'pending')).length;
+      const canceled = filteredBudgets.filter(b => b && (b.status === 'cancelado' || b.status === 'canceled')).length;
       
       return {
         labels: ['Finalizados', 'Pendentes', 'Cancelados'],
@@ -236,39 +700,67 @@ function Reports({ budgets: initialBudgets }) {
       console.error("Erro ao gerar dados de status chart:", error);
       return defaultChartData.statusChartData;
     }
-  }, [defaultChartData]); 
+  }, [defaultChartData]);
 
-  // Função para gerar dados do gráfico de receita mensal - simplificada
-  const generateMonthlyRevenueData = useCallback((filteredBudgets) => {
+  // Função para gerar dados do gráfico de receita mensal - versão detalhada
+  const generateMonthlyRevenueData = useCallback((processedBudgets) => {
     try {
-      if (!filteredBudgets || filteredBudgets.length === 0) {
+      if (!processedBudgets || !Array.isArray(processedBudgets) || processedBudgets.length === 0) {
+        console.log('Nenhum orçamento disponível para gerar dados de receita mensal');
         return defaultChartData.monthlyRevenueData;
       }
       
       const monthlyData = {};
       const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
       
-      filteredBudgets.forEach(budget => {
+      processedBudgets.forEach(budget => {
+        if (!budget) return;
+        
         if (budget.status === 'finalizado' || budget.status === 'finalized') {
-          const date = new Date(budget.created_at);
-          const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
-          const monthName = months[date.getMonth()];
-          
-          if (!monthlyData[monthKey]) {
-            monthlyData[monthKey] = {
-              monthName,
-              revenue: 0,
-              profit: 0
-            };
+          try {
+            // Validação defensiva da data
+            const createdAt = budget.created_at;
+            if (!createdAt) return;
+            
+            const date = new Date(createdAt);
+            if (isNaN(date.getTime())) {
+              console.warn('Data inválida encontrada:', createdAt);
+              return;
+            }
+            
+            const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
+            const monthName = months[date.getMonth()];
+            
+            if (!monthlyData[monthKey]) {
+              monthlyData[monthKey] = {
+                monthName,
+                revenue: 0,
+                profit: 0
+              };
+            }
+            
+            // Usar os valores calculados pelo processarOrcamento
+            const totalValue = parseFloat(budget.totalValue || 0);
+            const totalProfit = parseFloat(budget.profit || 0);
+            
+            if (!isNaN(totalValue)) {
+              monthlyData[monthKey].revenue += totalValue;
+            }
+            
+            if (!isNaN(totalProfit)) {
+              monthlyData[monthKey].profit += totalProfit;
+            }
+          } catch (e) {
+            console.error('Erro ao processar orçamento para receita mensal:', e, budget);
           }
-          
-          const totalValue = parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0);
-          monthlyData[monthKey].revenue += totalValue;
-          
-          // Estimativa simples de lucro como 30% da receita
-          monthlyData[monthKey].profit += totalValue * 0.3;
         }
       });
+      
+      // Verificar se temos dados para gerar o gráfico
+      if (Object.keys(monthlyData).length === 0) {
+        console.log('Nenhum dado mensal calculado, retornando dados padrão');
+        return defaultChartData.monthlyRevenueData;
+      }
       
       // Ordenar meses
       const sortedMonths = Object.values(monthlyData).sort((a, b) => {
@@ -289,7 +781,7 @@ function Reports({ budgets: initialBudgets }) {
             tension: 0.4
           },
           {
-            label: 'Lucro Estimado',
+            label: 'Lucro',
             data: sortedMonths.map(data => data.profit),
             borderColor: 'rgba(153, 102, 255, 1)',
             backgroundColor: 'rgba(153, 102, 255, 0.2)',
@@ -302,43 +794,45 @@ function Reports({ budgets: initialBudgets }) {
       console.error("Erro ao gerar dados de receita mensal:", error);
       return defaultChartData.monthlyRevenueData;
     }
-  }, [defaultChartData]); 
+  }, [defaultChartData]);
 
-  // Função para gerar dados do gráfico de produtos mais vendidos - simplificada
-  const generateTopProductsData = useCallback((filteredBudgets) => {
+  // Função para gerar dados do gráfico de produtos mais vendidos - versão detalhada
+  const generateTopProductsData = useCallback((processedBudgets) => {
     try {
-      if (!filteredBudgets || filteredBudgets.length === 0) {
+      if (!processedBudgets || !Array.isArray(processedBudgets) || processedBudgets.length === 0) {
+        console.log('Nenhum orçamento disponível para gerar dados de produtos mais vendidos');
         return defaultChartData.topProductsData;
       }
       
       const productCounts = {};
       
-      filteredBudgets.forEach(budget => {
+      // Iterar sobre os orçamentos processados
+      processedBudgets.forEach(budget => {
+        if (!budget || !budget.itensProcessados || !Array.isArray(budget.itensProcessados)) return;
+        
         if ((budget.status === 'finalizado' || budget.status === 'finalized')) {
-          let produtos = [];
-          
-          try {
-            // Extrair produtos primeiro
-            if (budget.produtos) {
-              produtos = typeof budget.produtos === 'string' ? JSON.parse(budget.produtos) : budget.produtos;
-            } else if (budget.products) {
-              produtos = typeof budget.products === 'string' ? JSON.parse(budget.products) : budget.products;
+          // Usar a nova estrutura de itensProcessados
+          budget.itensProcessados.forEach(item => {
+            if (!item) return;
+            
+            // Obter o nome do produto - verificar várias propriedades possíveis
+            const prodName = item.nome || 
+                            item.name || 
+                            (item.produtoCatalogo ? (item.produtoCatalogo.nome || item.produtoCatalogo.name) : 'Desconhecido');
+            
+            if (!productCounts[prodName]) {
+              productCounts[prodName] = 0;
             }
-          } catch (e) {
-            console.error('Erro ao processar produtos:', e);
-          }
-          
-          if (Array.isArray(produtos)) {
-            produtos.forEach(prod => {
-              const prodName = prod.nome || prod.name || 'Desconhecido';
-              if (!productCounts[prodName]) {
-                productCounts[prodName] = 0;
-              }
-              productCounts[prodName]++;
-            });
-          }
+            productCounts[prodName]++;
+          });
         }
       });
+      
+      // Verificar se temos produtos para gerar o gráfico
+      if (Object.keys(productCounts).length === 0) {
+        console.log('Nenhum produto encontrado, retornando dados padrão');
+        return defaultChartData.topProductsData;
+      }
       
       // Ordenar produtos por contagem
       const sortedProducts = Object.entries(productCounts)
@@ -363,341 +857,147 @@ function Reports({ budgets: initialBudgets }) {
     }
   }, [defaultChartData]);
 
-  // Função principal para processar dados do relatório - VERSÃO SIMPLIFICADA
+  // Função principal para processar dados do relatório - VERSÃO DETALHADA
   useEffect(() => {
-    const processReportSimplified = async () => {
+    const processReportDetailed = async () => {
       try {
-        if (!budgets || budgets.length === 0) {
+        if (!budgets || !Array.isArray(budgets) || budgets.length === 0) {
+          console.log('Nenhum orçamento disponível para processar');
           setLoading(false);
+          setSummary(prevSummary => ({
+            ...prevSummary,
+            total: 0,
+            finalized: 0,
+            pending: 0,
+            canceled: 0,
+            totalRevenue: 0,
+            totalInstallation: 0,
+            totalCosts: 0,
+            totalProfit: 0,
+            profitMargin: 0,
+            averageTicket: 0,
+            statusChartData: defaultChartData.statusChartData,
+            monthlyRevenueData: defaultChartData.monthlyRevenueData,
+            topProductsData: defaultChartData.topProductsData
+          }));
+          setReportData([]);
           return;
         }
         
         setLoading(true);
+        console.log(`Processando ${budgets.length} orçamentos`);
         
         // Filtrar orçamentos
         const filteredBudgets = getFilteredBudgetsByDate(budgets);
         
+        if (!filteredBudgets || filteredBudgets.length === 0) {
+          console.log('Nenhum orçamento após filtragem por data');
+          setLoading(false);
+          setSummary(prevSummary => ({
+            ...prevSummary,
+            total: 0,
+            finalized: 0,
+            pending: 0,
+            canceled: 0,
+            totalRevenue: 0,
+            totalInstallation: 0,
+            totalCosts: 0,
+            totalProfit: 0,
+            profitMargin: 0,
+            averageTicket: 0,
+            statusChartData: defaultChartData.statusChartData,
+            monthlyRevenueData: defaultChartData.monthlyRevenueData,
+            topProductsData: defaultChartData.topProductsData
+          }));
+          setReportData([]);
+          return;
+        }
+        
+        console.log(`Após filtragem: ${filteredBudgets.length} orçamentos`);
+        
         // Calcular estatísticas básicas
-        const finalized = filteredBudgets.filter(b => b.status === 'finalizado' || b.status === 'finalized');
-        const pending = filteredBudgets.filter(b => !b.status || b.status === 'pendente' || b.status === 'pending');
-        const canceled = filteredBudgets.filter(b => b.status === 'cancelado' || b.status === 'canceled');
+        const finalized = filteredBudgets.filter(b => b && (b.status === 'finalizado' || b.status === 'finalized'));
+        const pending = filteredBudgets.filter(b => b && (!b.status || b.status === 'pendente' || b.status === 'pending'));
+        const canceled = filteredBudgets.filter(b => b && (b.status === 'cancelado' || b.status === 'canceled'));
         
-        // Processar dados dos orçamentos para exibição
+        // Log para depuração
+        console.log(`Status: Finalizados=${finalized.length}, Pendentes=${pending.length}, Cancelados=${canceled.length}`);
+        
+        // Processar dados dos orçamentos usando o novo método
         const processedBudgets = filteredBudgets.map(budget => {
-          // Log específico para o orçamento #1006
-          if (budget.id === 1006 || budget.id === '1006') {
-            console.log('ANÁLISE COMPLETA - Orçamento #1006:', JSON.stringify(budget, null, 2));
-            
-            // Verificar se existem campos específicos
-            console.log('Estrutura do orçamento #1006:');
-            console.log('- produtos:', budget.produtos ? 'presente' : 'ausente');
-            console.log('- products:', budget.products ? 'presente' : 'ausente');
-            console.log('- acessorios:', budget.acessorios ? 'presente' : 'ausente');
-            console.log('- accessories:', budget.accessories ? 'presente' : 'ausente');
-            console.log('- bandos:', budget.bandos ? 'presente' : 'ausente');
-            console.log('- bands:', budget.bands ? 'presente' : 'ausente');
-            console.log('- trilhos:', budget.trilhos ? 'presente' : 'ausente');
-            console.log('- rails:', budget.rails ? 'presente' : 'ausente');
-          }
+          return processarOrcamento(budget, produtos);
+        }).filter(budget => budget !== null);
+        
+        console.log(`Orçamentos processados: ${processedBudgets.length}`);
+        
+        // Calcular totais com validação de valores
+        let totalRevenue = 0;
+        let totalInstallation = 0;
+        let totalCosts = 0;
+        let totalProfit = 0;
+        
+        try {
+          totalRevenue = processedBudgets.reduce((sum, b) => {
+            const value = b?.totalValue || 0;
+            if (isNaN(value)) return sum;
+            return sum + value;
+          }, 0);
           
-          // O preço de custo deve ser obtido diretamente de cada produto
-          let totalCost = 0;
-          let produtos = [];
-          let acessorios = [];
-          let bandos = [];
-          let trilhos = [];
+          totalInstallation = processedBudgets.reduce((sum, b) => {
+            const value = b?.installationFee || 0;
+            if (isNaN(value)) return sum;
+            return sum + value;
+          }, 0);
           
-          try {
-            // Extrair produtos
-            if (budget.produtos) {
-              produtos = typeof budget.produtos === 'string' ? JSON.parse(budget.produtos) : budget.produtos;
-            } else if (budget.products) {
-              produtos = typeof budget.products === 'string' ? JSON.parse(budget.products) : budget.products;
-            }
-            
-            // Extrair acessórios
-            if (budget.acessorios) {
-              acessorios = typeof budget.acessorios === 'string' ? JSON.parse(budget.acessorios) : budget.acessorios;
-            } else if (budget.accessories) {
-              acessorios = typeof budget.accessories === 'string' ? JSON.parse(budget.accessories) : budget.accessories;
-            } else if (budget.acessorios_json) {
-              acessorios = typeof budget.acessorios_json === 'string' ? JSON.parse(budget.acessorios_json) : budget.acessorios_json;
-            }
-            
-            // Extrair bandos
-            if (budget.bandos) {
-              bandos = typeof budget.bandos === 'string' ? JSON.parse(budget.bandos) : budget.bandos;
-            } else if (budget.bands) {
-              bandos = typeof budget.bands === 'string' ? JSON.parse(budget.bands) : budget.bands;
-            }
-            
-            // Extrair trilhos
-            if (budget.trilhos) {
-              trilhos = typeof budget.trilhos === 'string' ? JSON.parse(budget.trilhos) : budget.trilhos;
-            } else if (budget.rails) {
-              trilhos = typeof budget.rails === 'string' ? JSON.parse(budget.rails) : budget.rails;
-            }
-          } catch (e) {
-            console.error('Erro ao processar itens:', e);
-          }
+          totalCosts = processedBudgets.reduce((sum, b) => {
+            const value = b?.totalCost || 0;
+            if (isNaN(value)) return sum;
+            return sum + value;
+          }, 0);
           
-          // Log detalhado para o orçamento #1006
-          if (budget.id === 1006 || budget.id === '1006') {
-            console.log('PRODUTOS DO ORÇAMENTO #1006:', JSON.stringify(produtos, null, 2));
-            console.log('ACESSÓRIOS DO ORÇAMENTO #1006:', JSON.stringify(acessorios, null, 2));
-            console.log('BANDOS DO ORÇAMENTO #1006:', JSON.stringify(bandos, null, 2));
-            console.log('TRILHOS DO ORÇAMENTO #1006:', JSON.stringify(trilhos, null, 2));
-          }
+          totalProfit = processedBudgets.reduce((sum, b) => {
+            const value = b?.profit || 0;
+            if (isNaN(value)) return sum;
+            return sum + value;
+          }, 0);
           
-          // Função para extrair preço de custo de um item
-          const extrairPrecoCusto = (item) => {
-            if (!item) return 0;
-            
-            let precoCusto = 0;
-            
-            // Caso especial para o produto 5539 (SCREEN) no orçamento #1006
-            if (budget.id === 1006 || budget.id === '1006') {
-              if (item.id === 5539 || item.id === '5539' || (item.nome && item.nome.includes('SCREEN'))) {
-                console.log('Produto SCREEN detectado no orçamento #1006:', item);
-                
-                // Preço de custo fixo para este produto
-                const custoM2 = 109.89;
-                
-                // Extrair dimensões
-                const altura = parseFloat(item.altura || item.height || 0);
-                const largura = parseFloat(item.largura || item.width || 0);
-                
-                // Calcular área
-                const area = altura * largura;
-                
-                if (area > 0) {
-                  precoCusto = custoM2 * area;
-                  console.log(`Calculado preço de custo para SCREEN: ${custoM2} * ${area}m² = ${precoCusto}`);
-                  return precoCusto;
-                }
-              }
-            }
-            
-            // Verificar todos os possíveis campos de preço de custo
-            if (item.cost_price !== undefined) {
-              precoCusto = parseFloat(item.cost_price);
-            } else if (item.preco_custo !== undefined) {
-              precoCusto = parseFloat(item.preco_custo);
-            } else if (item.precio_costo !== undefined) {
-              precoCusto = parseFloat(item.precio_costo);
-            } else if (item.preço_custo !== undefined) {
-              precoCusto = parseFloat(item.preço_custo);
-            } else if (item.valor_bando_custo !== undefined) {
-              precoCusto = parseFloat(item.valor_bando_custo);
-            } else if (item.band_cost !== undefined) {
-              precoCusto = parseFloat(item.band_cost);
-            } else if (item.bando_custo !== undefined) {
-              precoCusto = parseFloat(item.bando_custo);
-            } else if (item.trilho_custo !== undefined) {
-              precoCusto = parseFloat(item.trilho_custo);
-            } else if (item.rail_cost !== undefined) {
-              precoCusto = parseFloat(item.rail_cost);
-            }
-            
-            // Verificar método de cálculo para aplicar m²
-            if (precoCusto <= 0 && (item.metodo_calculo === 'Metro Quadrado (m²)' || item.calculation_method === 'Metro Quadrado (m²)')) {
-              const custoM2 = parseFloat(item.preco_m2 || item.cost_per_m2 || item.price_m2 || 0);
-              if (custoM2 > 0) {
-                const altura = parseFloat(item.altura || item.height || 0);
-                const largura = parseFloat(item.largura || item.width || 0);
-                const area = altura * largura;
-                
-                if (area > 0) {
-                  precoCusto = custoM2 * area;
-                  console.log(`Calculado preço por m²: ${custoM2} * ${area}m² = ${precoCusto}`);
-                }
-              }
-            }
-            
-            return isNaN(precoCusto) ? 0 : precoCusto;
-          };
-          
-          // Processar produtos
-          if (Array.isArray(produtos)) {
-            produtos.forEach(prod => {
-              // Log detalhado do produto para análise
-              if (budget.id === 1006 || budget.id === '1006') {
-                console.log(`Analisando produto em orçamento #1006:`, prod);
-                console.log(`ID do produto:`, prod.id);
-                console.log(`Nome do produto:`, prod.nome || prod.name);
-                console.log(`Método de cálculo:`, prod.metodo_calculo || prod.calculation_method);
-                console.log(`Dimensões:`, {
-                  altura: prod.altura || prod.height,
-                  largura: prod.largura || prod.width
-                });
-              }
-              
-              const precoCusto = extrairPrecoCusto(prod);
-              if (precoCusto > 0) {
-                console.log('Preço de custo encontrado para produto:', precoCusto, 'para:', prod.nome || prod.name);
-                totalCost += precoCusto;
-              } else {
-                console.log('Preço de custo NÃO encontrado para produto:', prod.nome || prod.name);
-              }
-            });
-          }
-          
-          // Processar acessórios
-          if (Array.isArray(acessorios)) {
-            acessorios.forEach(acessorio => {
-              const precoCusto = extrairPrecoCusto(acessorio);
-              if (precoCusto > 0) {
-                console.log('Preço de custo encontrado para acessório:', precoCusto, 'para:', acessorio.nome || acessorio.name);
-                totalCost += precoCusto;
-              }
-            });
-          }
-          
-          // Processar bandos
-          if (Array.isArray(bandos)) {
-            bandos.forEach(bando => {
-              const precoCusto = extrairPrecoCusto(bando);
-              if (precoCusto > 0) {
-                console.log('Preço de custo encontrado para bando:', precoCusto, 'para:', bando.nome || bando.name);
-                totalCost += precoCusto;
-              }
-            });
-          }
-          
-          // Processar trilhos
-          if (Array.isArray(trilhos)) {
-            trilhos.forEach(trilho => {
-              const precoCusto = extrairPrecoCusto(trilho);
-              if (precoCusto > 0) {
-                console.log('Preço de custo encontrado para trilho:', precoCusto, 'para:', trilho.nome || trilho.name);
-                totalCost += precoCusto;
-              }
-            });
-          }
-          
-          // Verificar se o custo total é válido, senão usar fallback
-          if (isNaN(totalCost) || totalCost <= 0) {
-            console.warn('Preço de custo não encontrado para orçamento:', budget.id);
-            // Fallback para estimativa como solicitado
-            totalCost = parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0) * 0.7; // Estimativa de 70% como fallback
-            console.log('Usando estimativa de custo:', totalCost);
-          }
-          
-          // Processar produtos para instalação
-          let installationFee = 0;
-          
-          try {
-            // Log para debugging
-            console.log('Produtos do orçamento:', budget.id, produtos);
-            
-            // Calcular taxa de instalação
-            if (Array.isArray(produtos)) {
-              produtos.forEach(prod => {
-                // Verificar várias propriedades possíveis para instalação
-                const temInstalacao = prod.instalacao === true || 
-                                      prod.instalacao === 'true' || 
-                                      prod.instalacao === 1 ||
-                                      prod.installation === true || 
-                                      prod.installation === 'true' ||
-                                      prod.installation === 1;
-                                   
-                if (temInstalacao) {
-                  // Verificar várias propriedades possíveis para valor de instalação
-                  const valorInstalacao = parseFloat(
-                    prod.valor_instalacao || 
-                    prod.installation_value || 
-                    prod.installationValue || 
-                    prod.valorInstalacao || 
-                    0
-                  );
-                  installationFee += valorInstalacao;
-                  console.log('Valor de instalação encontrado:', valorInstalacao, 'para produto:', prod.nome || prod.name);
-                }
-              });
-            }
-          } catch (e) {
-            console.error('Erro ao processar produtos para instalação:', e);
-          }
-          
-          // Lucro = Preço de venda - Preço de custo - Instalação
-          const profit = parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0) - totalCost - installationFee;
-          
-          // Margem = % que o lucro representa do total
-          const margin = parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0) > 0 ? (profit / parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0)) * 100 : 0;
-          
-          console.log('Orçamento processado (valores reais):', {
-            id: budget.id,
-            totalValue: parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0),
-            totalCost,
-            installationFee,
-            profit,
-            margin
+          // Log para depuração
+          console.log('Totais calculados para todos os orçamentos:', {
+            totalRevenue,
+            totalInstallation,
+            totalCosts,
+            totalProfit
           });
-          
-          return {
-            ...budget,
-            totalValue: parseFloat(budget.total_price || budget.totalValue || budget.valor_total || 0),
-            totalCost,
-            installationFee,
-            profit,
-            margin,
-            produtos_processados: Array.isArray(produtos) ? produtos.map(prod => {
-              // Usar a função de extração de preço de custo
-              const precoCusto = extrairPrecoCusto(prod);
-              
-              // Se preço de custo for zero, usar estimativa
-              const prodCusto = precoCusto > 0 ? precoCusto : (prod.valor || prod.value || 0) * 0.7;
-              
-              // Lucro = Preço de venda - Preço de custo - Instalação
-              const prodValor = parseFloat(prod.valor || prod.value || 0);
-              const valorInstalacao = parseFloat(
-                prod.valor_instalacao || 
-                prod.installation_value || 
-                prod.installationValue || 
-                prod.valorInstalacao || 
-                0
-              );
-              
-              const prodLucro = prodValor - prodCusto - valorInstalacao;
-              
-              return {
-                ...prod,
-                total: prodValor,
-                totalCost: prodCusto,
-                profit: prodLucro,
-                valor_instalacao: valorInstalacao,
-                tem_instalacao: prod.instalacao === true || 
-                                prod.instalacao === 'true' || 
-                                prod.instalacao === 1 ||
-                                prod.installation === true || 
-                                prod.installation === 'true' ||
-                                prod.installation === 1
-              };
-            }) : []
-          };
-        });
-        
-        // Calcular totais
-        const totalRevenue = finalized.reduce((sum, b) => {
-          const value = parseFloat(b.total_price || b.totalValue || b.valor_total || 0);
-          return sum + value;
-        }, 0);
-        
-        // Calcular valor total de instalação
-        const totalInstallation = processedBudgets.reduce((sum, b) => {
-          return sum + (b.installationFee || 0);
-        }, 0);
-        
-        console.log('Total instalação calculado:', totalInstallation);
-        
-        // Cálculo simplificado de lucro
-        const totalCosts = processedBudgets.reduce((sum, b) => {
-          return sum + (b.totalCost || 0);
-        }, 0);
-        const totalProfit = totalRevenue - totalCosts - totalInstallation;
+        } catch (error) {
+          console.error('Erro ao calcular totais:', error);
+        }
         
         // A margem é calculada sobre o valor total
         const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+        
+        // Preparar dados para os gráficos com tratamento de erros
+        let statusChartData, monthlyRevenueData, topProductsData;
+        
+        try {
+          statusChartData = generateStatusChartData(filteredBudgets);
+        } catch (error) {
+          console.error('Erro ao gerar dados do gráfico de status:', error);
+          statusChartData = defaultChartData.statusChartData;
+        }
+        
+        try {
+          monthlyRevenueData = generateMonthlyRevenueData(processedBudgets);
+        } catch (error) {
+          console.error('Erro ao gerar dados do gráfico de receita mensal:', error);
+          monthlyRevenueData = defaultChartData.monthlyRevenueData;
+        }
+        
+        try {
+          topProductsData = generateTopProductsData(processedBudgets);
+        } catch (error) {
+          console.error('Erro ao gerar dados do gráfico de produtos:', error);
+          topProductsData = defaultChartData.topProductsData;
+        }
         
         // Atualizar o resumo
         setSummary({
@@ -711,16 +1011,16 @@ function Reports({ budgets: initialBudgets }) {
           totalProfit,
           profitMargin,
           averageTicket: finalized.length > 0 ? totalRevenue / finalized.length : 0,
-          statusChartData: generateStatusChartData(filteredBudgets),
-          monthlyRevenueData: generateMonthlyRevenueData(filteredBudgets),
-          topProductsData: generateTopProductsData(filteredBudgets)
+          statusChartData,
+          monthlyRevenueData,
+          topProductsData
         });
         
         // Atualizar dados do relatório
         setReportData(processedBudgets);
         setLoading(false);
       } catch (error) {
-        console.error('Erro ao processar relatório simplificado:', error);
+        console.error('Erro ao processar relatório detalhado:', error);
         setLoading(false);
         // Definir valores padrão
         setSummary(prevSummary => ({
@@ -735,13 +1035,99 @@ function Reports({ budgets: initialBudgets }) {
           totalProfit: 0,
           profitMargin: 0,
           averageTicket: 0,
+          statusChartData: defaultChartData.statusChartData,
+          monthlyRevenueData: defaultChartData.monthlyRevenueData,
+          topProductsData: defaultChartData.topProductsData
         }));
         setReportData([]);
       }
     };
     
-    processReportSimplified();
-  }, [budgets, period, startDate, endDate, getFilteredBudgetsByDate, generateStatusChartData, generateMonthlyRevenueData, generateTopProductsData]);
+    processReportDetailed();
+  }, [budgets, period, startDate, endDate, getFilteredBudgetsByDate, generateStatusChartData, generateMonthlyRevenueData, generateTopProductsData, defaultChartData, produtos, processarOrcamento]);
+
+  // Função para renderizar os gráficos
+  const renderCharts = () => {
+    const chartSection = [];
+    
+    if (selectedCharts.status && summary.statusChartData && Array.isArray(summary.statusChartData.labels) && summary.statusChartData.labels.length > 0) {
+      chartSection.push(
+        <div key="status-chart" className="chart-container">
+          <Pie data={summary.statusChartData} options={{
+            responsive: true,
+            plugins: {
+              legend: {
+                position: 'right',
+              },
+              title: {
+                display: true,
+                text: 'Status dos Orçamentos',
+              },
+            },
+          }} />
+        </div>
+      );
+    }
+    
+    if (selectedCharts.revenue && summary.monthlyRevenueData && Array.isArray(summary.monthlyRevenueData.labels) && summary.monthlyRevenueData.labels.length > 0) {
+      chartSection.push(
+        <div key="revenue-chart" className="chart-container">
+          <Line 
+            data={summary.monthlyRevenueData} 
+            options={{
+              responsive: true,
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: (value) => `R$ ${value.toLocaleString('pt-BR')}`
+                  }
+                }
+              },
+              plugins: {
+                tooltip: {
+                  callbacks: {
+                    label: (context) => `R$ ${context.raw.toLocaleString('pt-BR')}`
+                  }
+                }
+              }
+            }}
+          />
+        </div>
+      );
+    }
+    
+    if (selectedCharts.products && summary.topProductsData && Array.isArray(summary.topProductsData.labels) && summary.topProductsData.labels.length > 0) {
+      chartSection.push(
+        <div key="products-chart" className="chart-container">
+          <Bar 
+            data={summary.topProductsData} 
+            options={{
+              responsive: true,
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    stepSize: 1
+                  }
+                }
+              }
+            }}
+          />
+        </div>
+      );
+    }
+    
+    if (chartSection.length === 0) {
+      return <div className="no-data-message">Não há dados suficientes para gerar gráficos.</div>;
+    }
+    
+    return (
+      <div className="charts-grid">
+        {chartSection}
+      </div>
+    );
+  };
 
   // Função para aplicar filtros de data
   const handlePeriodChange = (event) => {
@@ -843,7 +1229,7 @@ function Reports({ budgets: initialBudgets }) {
             </div>
             <button 
               className="apply-filter"
-              onClick={() => processReportSimplified()}
+              onClick={() => processReportDetailed()}
             >
               Aplicar
             </button>
@@ -885,71 +1271,7 @@ function Reports({ budgets: initialBudgets }) {
         <div className="loading">Carregando dados...</div>
       ) : (
         <>
-          <div className="charts-section">
-            <h3>Análise Gráfica</h3>
-            <div className="charts-container">
-              {selectedCharts.status && (
-                <div className="chart-card">
-                  <h4>Status dos Orçamentos</h4>
-                  <div className="chart-wrapper">
-                    <Pie data={summary.statusChartData} />
-                  </div>
-                </div>
-              )}
-              
-              {selectedCharts.revenue && (
-                <div className="chart-card">
-                  <h4>Receita Mensal</h4>
-                  <div className="chart-wrapper">
-                    <Line 
-                      data={summary.monthlyRevenueData} 
-                      options={{
-                        responsive: true,
-                        scales: {
-                          y: {
-                            beginAtZero: true,
-                            ticks: {
-                              callback: (value) => `R$ ${value.toLocaleString('pt-BR')}`
-                            }
-                          }
-                        },
-                        plugins: {
-                          tooltip: {
-                            callbacks: {
-                              label: (context) => `R$ ${context.raw.toLocaleString('pt-BR')}`
-                            }
-                          }
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-              
-              {selectedCharts.products && (
-                <div className="chart-card">
-                  <h4>Produtos Mais Vendidos</h4>
-                  <div className="chart-wrapper">
-                    <Bar 
-                      data={summary.topProductsData} 
-                      options={{
-                        responsive: true,
-                        scales: {
-                          y: {
-                            beginAtZero: true,
-                            ticks: {
-                              stepSize: 1
-                            }
-                          }
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
+          {renderCharts()}
           <div className="summary-cards">
             <div className="summary-card">
               <h3>Orçamentos</h3>
@@ -1019,49 +1341,31 @@ function Reports({ budgets: initialBudgets }) {
                         <td colSpan="9">
                           <div className="product-details">
                             <h4>Produtos do Orçamento</h4>
-                            {Array.isArray(budget.produtos_processados) && budget.produtos_processados.length > 0 ? (
-                              budget.produtos_processados.map((product, index) => (
-                                <div key={index} className="product-detail-item">
-                                  <h5>{product.nome || product.name || product.produto?.nome || product.product?.name || 'Produto Desconhecido'}</h5>
-                                  <div className="product-info-section">
-                                    <p><strong>Dimensões:</strong> {product.largura || product.width || 0}m x {product.altura || product.height || 0}m</p>
-                                    <p><strong>Custo:</strong> R$ {product.totalCost?.toFixed(2) || '0.00'}</p>
-                                    <p><strong>Valor:</strong> R$ {product.total?.toFixed(2) || '0.00'}</p>
-                                    <p><strong>Lucro:</strong> R$ {product.profit?.toFixed(2) || '0.00'}</p>
-                                  </div>
-
-                                  {product.bando && (
-                                    <div className="bando-section">
-                                      <h6>Bandô</h6>
-                                      <p><strong>Tipo:</strong> {product.bando}</p>
-                                      <p><strong>Custo:</strong> R$ {product.cost?.bandoCost?.toFixed(2) || '0.00'}</p>
-                                      <p><strong>Valor:</strong> R$ {product.cost?.bandoValue?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                  )}
-
-                                  {product.trilho_tipo && (
-                                    <div className="trilho-section">
-                                      <h6>Trilho</h6>
-                                      <p><strong>Tipo:</strong> {product.trilho_tipo}</p>
-                                      <p><strong>Custo:</strong> R$ {product.cost?.trilhoCost?.toFixed(2) || '0.00'}</p>
-                                      <p><strong>Valor:</strong> R$ {product.cost?.trilhoValue?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                  )}
-
-                                  {product.tem_instalacao && (
-                                    <div className="installation-section">
-                                      <h6>Instalação</h6>
-                                      <p><strong>Valor:</strong> R$ {parseFloat(product.valor_instalacao || 0).toFixed(2)}</p>
-                                    </div>
-                                  )}
-
-                                  <div className="subtotal">
-                                    <p><strong>Subtotal:</strong> R$ {(product.total + (product.valor_instalacao || 0))?.toFixed(2) || '0.00'}</p>
-                                  </div>
-                                </div>
-                              ))
+                            {Array.isArray(budget.itensProcessados) && budget.itensProcessados.length > 0 ? (
+                              <table className="product-detail-table">
+                                <thead>
+                                  <tr>
+                                    <th>Produto</th>
+                                    <th>Dimensões</th>
+                                    <th>Custo</th>
+                                    <th>Valor</th>
+                                    <th>Lucro</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {budget.itensProcessados.map((product, index) => (
+                                    <tr key={index} className="product-detail-item">
+                                      <td>{product.nome || 'Produto Desconhecido'}</td>
+                                      <td>{product.dimensoes.width.toFixed(2)}m x {product.dimensoes.height.toFixed(2)}m</td>
+                                      <td>R$ {(product.custos?.produto?.custo || 0).toFixed(2)}</td>
+                                      <td>R$ {(product.custos?.produto?.valor || 0).toFixed(2)}</td>
+                                      <td>R$ {((product.custos?.produto?.valor || 0) - (product.custos?.produto?.custo || 0)).toFixed(2)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             ) : (
-                              <p>Nenhum produto disponível para este orçamento</p>
+                              <p className="no-products-message">Nenhum produto disponível para este orçamento</p>
                             )}
                           </div>
                         </td>
