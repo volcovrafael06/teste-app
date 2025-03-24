@@ -62,15 +62,6 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     trilho_motorizado: { sale_price: 0 }
   });
 
-  const trilhoOptions = {
-    'trilho_redondo_com_comando': 'Trilho redondo com comando',
-    'trilho_redondo_sem_comando': 'Trilho redondo sem comando',
-    'trilho_slim_com_comando': 'Trilho Slim com comando',
-    'trilho_slim_sem_comando': 'Trilho Slim sem comando',
-    'trilho_quadrado_com_rodizio_em_gancho': 'Trilho quadrado com rodizio em gancho',
-    'trilho_motorizado': 'Trilho motorizado'
-  };
-
   useEffect(() => {
     const fetchCustomers = async () => {
       try {
@@ -189,28 +180,18 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       try {
         const { data, error } = await supabase
           .from('rail_pricing')
-          .select('*')
-          .order('rail_type');
+          .select('*');
 
         if (error) throw error;
 
         if (data) {
           console.log('Configurações dos trilhos carregadas:', data);
-          // Criar um mapa com os tipos de trilho e seus preços
           const configMap = {};
-          
           data.forEach(item => {
             configMap[item.rail_type] = {
-              sale_price: parseFloat(item.sale_price) || 0,
-              cost_price: parseFloat(item.cost_price) || 0
+              sale_price: item.sale_price || 0
             };
           });
-
-          // Manter mapeamentos adicionais para compatibilidade
-          configMap.trilho_redondo_comando = configMap.trilho_redondo_com_comando;
-          configMap.trilho_slim_comando = configMap.trilho_slim_com_comando;
-          configMap.trilho_quadrado_gancho = configMap.trilho_quadrado_com_rodizio_em_gancho;
-
           setTrilhosConfig(configMap);
         }
       } catch (error) {
@@ -219,38 +200,6 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     };
 
     loadTrilhosConfig();
-  }, []);
-
-  useEffect(() => {
-    const fetchLatestProducts = async () => {
-      try {
-        const { data, error } = await supabase.from('produtos').select('*');
-        if (error) throw error;
-        setProducts(data || []);
-      } catch (error) {
-        console.error('Error fetching latest products:', error);
-      }
-    };
-
-    const productsSubscription = supabase
-      .channel('produtos_changes')
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'produtos' 
-        }, 
-        () => {
-          fetchLatestProducts();
-        }
-      )
-      .subscribe();
-
-    fetchLatestProducts();
-
-    return () => {
-      productsSubscription.unsubscribe();
-    };
   }, []);
 
   useEffect(() => {
@@ -300,8 +249,6 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
                 installationValue: p.valor_instalacao || 0,
                 trilho_tipo: p.trilho_tipo || '',
                 valor_trilho: p.valor_trilho || 0,
-                painel: false,
-                numFolhas: 1,
                 subtotal: p.subtotal || 0,
                 usedMinimum: false // Add this since we're using existing values
               };
@@ -346,58 +293,29 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     const inputWidth = parseFloat(width) || 0;
     const inputHeight = parseFloat(height) || 0;
     
-    let minWidth = parseFloat(product.largura_minima) || 0;
-    let minHeight = parseFloat(product.altura_minima) || 0;
-    let minArea = parseFloat(product.area_minima) || 0;
+    const minWidth = parseFloat(product.largura_minima) || 0;
+    const minHeight = parseFloat(product.altura_minima) || 0;
+    const minArea = parseFloat(product.area_minima) || 0;
     
-    // Special case for SCREEN 0,5 PREMIUM - ensure it has the correct minimum area
-    if (product.nome === 'SCREEN 0,5 PREMIUM' || product.nome === 'SCREEN 0.5 PREMIUM' || product.nome === 'PARIS BK') {
-      minArea = 1.5;
-      
-      // Calculate minimum dimensions based on the correct minimum area
-      // If current dimensions don't provide enough area, adjust them
-      const currentArea = inputWidth * inputHeight;
-      if (currentArea < minArea) {
-        // If the dimensions are square (or nearly square), adjust both proportionally
-        if (Math.abs(inputWidth - inputHeight) < 0.1) {
-          const sideDimension = Math.sqrt(minArea);
-          minWidth = sideDimension;
-          minHeight = sideDimension;
-        } 
-        // Otherwise, maintain aspect ratio but scale up to reach minimum area
-        else {
-          const ratio = inputWidth / inputHeight;
-          minHeight = Math.sqrt(minArea / ratio);
-          minWidth = minHeight * ratio;
-        }
-      }
-      
-      console.log('Fixed minimum area for SCREEN 0,5 PREMIUM to 1.5m² with dimensions', minWidth.toFixed(2), 'x', minHeight.toFixed(2));
-    }
-    
-    // For display purposes, we'll keep the original input dimensions
-    // For pricing calculations, we'll use the minimum dimensions if necessary
     let finalWidth = Math.max(inputWidth, minWidth);
     let finalHeight = Math.max(inputHeight, minHeight);
     
     const area = inputWidth * inputHeight;
     const isUsingMinimum = finalWidth > inputWidth || finalHeight > inputHeight || (minArea > 0 && area < minArea);
     
-    // Calculate the final area for pricing purposes
-    let finalArea = finalWidth * finalHeight;
-    
     if (minArea > 0 && area < minArea) {
-      // Use the exact minimum area value directly for pricing
-      finalArea = minArea;
+      const ratio = Math.sqrt(minArea / area);
+      finalWidth = Math.max(inputWidth * ratio, minWidth);
+      finalHeight = Math.max(inputHeight * ratio, minHeight);
     }
     
     // Apply 10% increase to area if Painel is selected
+    let finalArea = finalWidth * finalHeight;
     if (isPainel) {
       finalArea = finalArea * 1.1; // 10% increase
     }
     
     return {
-      // Return both the pricing dimensions and the input dimensions
       width: finalWidth,
       height: finalHeight,
       area: finalArea,
@@ -514,18 +432,6 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
         // Use the area that already includes the 10% increase if Painel is selected
         subtotal = area * price;
       }
-      
-      // Adiciona o valor do trilho se selecionado (para qualquer modelo)
-      if (product.trilho_tipo && product.valor_trilho > 0) {
-        console.log('Adicionando valor do trilho (modelo não-Wave):', {
-          tipo: product.trilho_tipo,
-          valorConfigurado: trilhosConfig[product.trilho_tipo],
-          valorCalculado: product.valor_trilho,
-          subtotalAntes: subtotal,
-          subtotalDepois: subtotal + product.valor_trilho
-        });
-        subtotal += product.valor_trilho;
-      }
     }
 
     // Adiciona valor do bandô se marcado
@@ -589,18 +495,23 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     }
     
     try {
-      // Verificar se a configuração do trilho existe
-      if (!trilhosConfig || !trilhosConfig[railType]) {
-        console.warn(`Configuração não encontrada para o trilho: ${railType}`);
-        console.log('Configurações disponíveis:', trilhosConfig);
-        return 0;
-      }
-      
-      const salePrice = parseFloat(trilhosConfig[railType]?.sale_price) || 0;
+      // Mapeia o nome do trilho para o tipo correto na tabela rail_pricing
+      const railTypeMap = {
+        'trilho_redondo_com_comando': 'trilho_redondo_comando',
+        'trilho_redondo_sem_comando': 'trilho_redondo_sem_comando',
+        'trilho_slim_com_comando': 'trilho_slim_comando',
+        'trilho_slim_sem_comando': 'trilho_slim_sem_comando',
+        'trilho_quadrado_com_rodizio_em_gancho': 'trilho_quadrado_gancho',
+        'trilho_motorizado': 'trilho_motorizado'
+      };
+
+      const mappedRailType = railTypeMap[railType] || railType;
+      const salePrice = parseFloat(trilhosConfig[mappedRailType]?.sale_price) || 0;
       const parsedWidth = parseFloat(width) || 0;
       
       console.log('Dados para cálculo do trilho:', {
         tipo: railType,
+        tipoMapeado: mappedRailType,
         configuracaoTrilhos: trilhosConfig,
         precoVenda: salePrice,
         largura: parsedWidth,
@@ -667,14 +578,13 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
   const handleProductDimensionChange = (e) => {
     const { name, value } = e.target;
     
-    if (name === 'width' && currentProduct.trilho_tipo) {
-      // Recalcula o preço do trilho quando a largura muda (para qualquer modelo)
+    if (name === 'width' && currentProduct.product?.modelo?.toUpperCase() === 'WAVE' && currentProduct.trilho_tipo) {
+      // Recalcula o preço do trilho quando a largura muda
       const railPrice = calculateRailPrice(value, currentProduct.trilho_tipo);
       
       console.log('Atualizando largura e recalculando trilho:', {
         novaLargura: value,
-        novoValorTrilho: railPrice,
-        modelo: currentProduct.product?.modelo
+        novoValorTrilho: railPrice
       });
 
       setCurrentProduct(prev => {
@@ -751,16 +661,11 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     setCurrentAccessory(prev => {
       const updated = { ...prev, [name]: value };
       
-      if (updated.accessory && updated.color) {
-        // Usar parseFloat para permitir valores decimais (medidas em metros)
-        const quantity = parseFloat(updated.quantity) || 1;
+      if (updated.accessory && updated.color && updated.quantity) {
+        const quantity = parseInt(updated.quantity, 10) || 1;
         const color = updated.accessory.colors.find(c => c.color === updated.color);
-        
         if (color) {
-          const price = parseFloat(color.sale_price) || 0;
-          // Multiplicar explicitamente o preço pela quantidade (que pode ser decimal)
-          updated.subtotal = quantity * price;
-          console.log(`Calculando subtotal do acessório: ${quantity} x R$${price} = R$${updated.subtotal}`);
+          updated.subtotal = quantity * (parseFloat(color.sale_price) || 0);
         }
       }
       
@@ -769,10 +674,9 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
   };
 
   const calculateAccessorySubtotal = () => {
-    if (!currentAccessory.accessory || !currentAccessory.color) return;
+    if (!currentAccessory.accessory || !currentAccessory.color || !currentAccessory.quantity) return;
 
-    // Usar parseFloat para permitir valores decimais (medidas em metros)
-    const quantity = parseFloat(currentAccessory.quantity) || 1;
+    const quantity = parseInt(currentAccessory.quantity, 10) || 1;
     const color = currentAccessory.accessory.colors.find(c => c.color === currentAccessory.color);
 
     if (!color) {
@@ -780,46 +684,15 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       return;
     }
 
-    const price = parseFloat(color.sale_price) || 0;
-    const subtotal = quantity * price;
-    console.log(`Calculando subtotal do acessório: ${quantity} x R$${price} = R$${subtotal}`);
-    
-    setCurrentAccessory(prev => ({ ...prev, quantity, subtotal }));
+    const subtotal = quantity * (parseFloat(color.sale_price) || 0);
+    setCurrentAccessory(prev => ({ ...prev, subtotal }));
   };
 
   const handleCustomerChange = (selectedCustomer) => {
-    console.log('Cliente selecionado:', selectedCustomer);
-    
-    if (!selectedCustomer) {
-      setNewBudget(prev => ({ ...prev, customer: null }));
-      return;
-    }
-    
-    // Se temos apenas o ID do cliente, vamos buscar os dados completos
-    if (selectedCustomer.id && (!selectedCustomer.name || !selectedCustomer.email || !selectedCustomer.phone)) {
-      console.log('Buscando dados completos do cliente:', selectedCustomer.id);
-      
-      // Buscar cliente completo do Supabase
-      supabase
-        .from('clientes')
-        .select('*')
-        .eq('id', selectedCustomer.id)
-        .single()
-        .then(({ data, error }) => {
-          if (error) {
-            console.error('Erro ao buscar cliente completo:', error);
-            return;
-          }
-          
-          if (data) {
-            console.log('Dados completos do cliente encontrados:', data);
-            setNewBudget(prev => ({ ...prev, customer: data }));
-          }
-        });
-    } else {
-      // Já temos todos os dados do cliente
-      setNewBudget(prev => ({ ...prev, customer: selectedCustomer }));
-    }
+    setNewBudget(prev => ({
+      ...prev,
+      customer: selectedCustomer
+    }));
   };
 
   const handleCreateCustomer = async (name) => {
@@ -886,48 +759,17 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       
       if (error) throw error;
       
-      if (data && data.length > 0) {
+      if (data) {
         console.log('Fetched accessories:', data);
         setAccessoriesList(data);
       } else {
-        console.log('Nenhum acessório encontrado');
         setAccessoriesList([]);
-        setError('Nenhum acessório cadastrado. Adicione acessórios na seção de Acessórios primeiro.');
-        setTimeout(() => setError(null), 5000); // Limpa a mensagem após 5 segundos
       }
     } catch (error) {
       console.error('Error fetching accessories:', error);
-      setError('Erro ao carregar acessórios: ' + error.message);
-      setTimeout(() => setError(null), 5000); // Limpa a mensagem após 5 segundos
+      setError('Erro ao carregar acessórios');
     }
   };
-
-  useEffect(() => {
-    // Primeiro, carregue os acessórios
-    fetchAccessories();
-    
-    // Em seguida, configure um listener em tempo real
-    const accessoriesSubscription = supabase
-      .channel('accessories_changes')
-      .on('postgres_changes', 
-        { 
-          event: '*', // Escuta todos os eventos (INSERT, UPDATE, DELETE)
-          schema: 'public', 
-          table: 'accessories' 
-        }, 
-        (payload) => {
-          console.log('Detected change in accessories:', payload);
-          // Recarrega todos os acessórios quando houver qualquer alteração
-          fetchAccessories();
-        }
-      )
-      .subscribe();
-
-    // Limpar o listener quando o componente for desmontado
-    return () => {
-      accessoriesSubscription.unsubscribe();
-    };
-  }, []);
 
   const handleAddProduct = () => {
     if (!currentProduct.product) {
@@ -1017,30 +859,12 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
   };
 
   const handleAddAccessory = () => {
-    if (!currentAccessory.accessory || !currentAccessory.color) {
-      setError("Por favor, selecione um acessório e uma cor.");
+    if (!currentAccessory.accessory || !currentAccessory.color || !currentAccessory.quantity) {
+      setError("Por favor, preencha todos os campos do acessório.");
       return;
     }
 
-    // Usar parseFloat para permitir valores decimais (medidas em metros)
-    const quantity = parseFloat(currentAccessory.quantity) || 1;
-    
-    // Recalcular o subtotal para garantir consistência
-    const color = currentAccessory.accessory.colors.find(c => c.color === currentAccessory.color);
-    let subtotal = currentAccessory.subtotal;
-    
-    if (color) {
-      const price = parseFloat(color.sale_price) || 0;
-      subtotal = quantity * price;
-    }
-    
-    const accessoryToAdd = {
-      ...currentAccessory,
-      quantity,
-      subtotal
-    };
-
-    const updatedAccessories = [...newBudget.accessories, accessoryToAdd];
+    const updatedAccessories = [...newBudget.accessories, { ...currentAccessory }];
 
     const productsTotal = newBudget.products.reduce((sum, prod) => sum + (prod.subtotal || 0), 0);
     const accessoriesTotal = updatedAccessories.reduce((sum, acc) => sum + (acc.subtotal || 0), 0);
@@ -1118,18 +942,6 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
         nextBudgetNumber = Math.max(985, maxBudget[0].numero_orcamento + 1);
       }
 
-      // Apenas lê os valores dos trilhos da tabela rail_pricing (não atualiza)
-      const productsWithRails = newBudget.products.filter(product => product.trilho_tipo);
-      
-      for (const product of productsWithRails) {
-        const railConfig = trilhosConfig[product.trilho_tipo];
-        if (railConfig) {
-          // Usa o valor atual da tabela para cálculos
-          const currentSalePrice = parseFloat(railConfig.sale_price) || 0;
-          product.valor_trilho = parseFloat(product.width) * currentSalePrice;
-        }
-      }
-
       const cleanProducts = newBudget.products.map(product => ({
         produto_id: product.product.id,
         largura: parseFloat(product.width),
@@ -1149,7 +961,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       const cleanAccessories = newBudget.accessories.map(accessory => ({
         accessory_id: accessory.accessory.id,
         color: accessory.color,
-        quantity: parseFloat(accessory.quantity),
+        quantity: parseInt(accessory.quantity, 10),
         subtotal: accessory.subtotal
       }));
 
@@ -1161,7 +973,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
         acessorios_json: JSON.stringify(cleanAccessories),
         valor_negociado: newBudget.negotiatedValue,
         status: isEditing ? undefined : 'pending',
-        numero_orcamento: isEditing ? undefined : nextBudgetNumber
+        numero_orcamento: isEditing ? undefined : nextBudgetNumber // Adiciona o número do orçamento apenas para novos orçamentos
       };
 
       console.log('Saving budget with data:', budgetData);
@@ -1385,25 +1197,6 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
             </div>
           )}
         </div>
-
-        {currentProduct.product?.modelo.toUpperCase() === 'WAVE' && (
-          <div className="form-group">
-            <label htmlFor="trilho_tipo">Tipo de Trilho</label>
-            <select
-              id="trilho_tipo"
-              value={currentProduct.trilho_tipo}
-              onChange={handleRailTypeChange}
-              className="form-control"
-            >
-              <option value="">Selecione o tipo de trilho</option>
-              {Object.entries(trilhoOptions).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
     );
   };
@@ -1446,14 +1239,14 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
                 {newBudget.products.map((prod, index) => (
                   <div key={index} className="added-product-item">
                     <div className="product-info">
-                      <p><strong>{prod.product.nome}</strong></p>
+                      <p><strong>Produto {index + 1} - {prod.product.nome}</strong></p>
                       <p>
                         Dimensões digitadas: {prod.inputWidth.toFixed(2)}m x {prod.inputHeight.toFixed(2)}m
                       </p>
                       {prod.usedMinimum && (
                         <>
                           <p className="minimum-warning">
-                            DIMENSÕES MÍNIMAS PARA CÁLCULO: {prod.width.toFixed(2)}m x {prod.height.toFixed(2)}m
+                            USANDO VALORES MINIMOS {prod.width.toFixed(2)}m x {prod.height.toFixed(2)}m
                           </p>
                         </>
                       )}
@@ -1468,7 +1261,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
                       )}
                       {prod.bando && <p>Bandô: R$ {prod.bandoValue.toFixed(2)}</p>}
                       {prod.installation && <p>Instalação: R$ {prod.installationValue}</p>}
-                      {prod.trilho_tipo && <p>Trilho: {trilhoOptions[prod.trilho_tipo]}</p>}
+                      {prod.trilho_tipo && <p>Trilho: {prod.trilho_tipo}</p>}
                       {prod.valor_trilho && <p>Valor do Trilho: R$ {prod.valor_trilho.toFixed(2)}</p>}
                       <p className="product-subtotal">Subtotal: R$ {prod.subtotal.toFixed(2)}</p>
                     </div>
@@ -1499,9 +1292,9 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
             <SelectOrCreate
               options={filteredProducts}
               value={currentProduct.product}
+              onChange={handleProductChange}
               labelKey="nome"
               valueKey="id"
-              onChange={handleProductChange}
               onCreate={fetchAccessories}
               showCreate={false}
             />
@@ -1521,11 +1314,12 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
                       className="form-control"
                     >
                       <option value="">Selecione o tipo de trilho</option>
-                      {Object.entries(trilhoOptions).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
+                      <option value="trilho_redondo_com_comando">Trilho redondo com comando</option>
+                      <option value="trilho_redondo_sem_comando">Trilho redondo sem comando</option>
+                      <option value="trilho_slim_com_comando">Trilho Slim com comando</option>
+                      <option value="trilho_slim_sem_comando">Trilho Slim sem comando</option>
+                      <option value="trilho_quadrado_com_rodizio_em_gancho">Trilho quadrado com rodizio em gancho</option>
+                      <option value="trilho_motorizado">Trilho motorizado</option>
                     </select>
                   </div>
                 )}
@@ -1561,7 +1355,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
               {newBudget.accessories.map((acc, index) => (
                 <div key={index} className="added-accessory-item">
                   <div className="accessory-info">
-                    <p><strong>{acc.accessory.name}</strong></p>
+                    <p><strong>Acessório {index + 1} - {acc.accessory.name}</strong></p>
                     <p>Cor: {acc.color}</p>
                     <p>Quantidade: {acc.quantity}</p>
                     <p>Preço unitário: R$ {acc.accessory.colors.find(c => c.color === acc.color)?.sale_price.toFixed(2)}</p>
@@ -1626,12 +1420,11 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
 
                   <input
                     type="number"
-                    step="0.01"
                     name="quantity"
                     value={currentAccessory.quantity}
                     onChange={handleAccessoryInputChange}
                     placeholder="Quantidade"
-                    min="0.01"
+                    min="1"
                   />
                 </div>
 

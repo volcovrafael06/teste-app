@@ -11,6 +11,9 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   margin-top: 20px;
   margin-bottom: 20px;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 .header-section {
@@ -54,12 +57,15 @@
 }
 
 .client-section,
-.items-section,
 .totals-section,
 .observations-section {
   margin-bottom: 20px;
   padding: 10px;
   border: 1px solid #ddd;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .client-section {
@@ -75,6 +81,56 @@
   margin: 5px 0;
 }
 
+.client-section table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 15px;
+  border: 1px solid #ddd;
+}
+
+.client-section th,
+.client-section td {
+  padding: 8px;
+  border: 1px solid #ddd;
+  vertical-align: middle;
+}
+
+.client-section th {
+  background-color: #f2f2f2;
+  font-weight: bold;
+  text-align: left;
+}
+
+.client-section .desc-col {
+  width: 60%;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.client-section .qty-col {
+  width: 15%;
+  text-align: center;
+}
+
+.client-section .price-col {
+  width: 25%;
+  text-align: right;
+}
+
+.client-section .total-row td {
+  font-weight: bold;
+  border-top: 2px solid #bbb;
+}
+
+.client-section .total-row .desc-col {
+  text-align: right;
+}
+
+.client-section .total-val {
+  text-align: right;
+}
+
 .items-section {
   margin: 20px 0;
 }
@@ -82,30 +138,6 @@
 .items-section h3 {
   font-size: 14px;
   margin: 0 0 10px 0;
-}
-
-.items-section table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 20px;
-}
-
-.items-section th {
-  background-color: #f8f9fa;
-  padding: 12px;
-  text-align: left;
-  border-bottom: 2px solid #dee2e6;
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
-}
-
-.items-section td {
-  padding: 12px;
-  border-bottom: 1px solid #dee2e6;
-}
-
-.items-section td:last-child {
-  text-align: right;
 }
 
 .totals-section {
@@ -145,6 +177,8 @@
   padding: 20px;
   max-width: 210mm;  /* A4 width */
   margin: 20px auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .budget-header {
@@ -184,81 +218,40 @@
   border-collapse: collapse;
   font-size: 12px;
   margin-top: 15px;
-  table-layout: fixed; /* Fixed table layout for better column control */
-  max-width: 100%; /* Garante que a tabela não ultrapasse a largura do contêiner */
+  table-layout: fixed;
   box-sizing: border-box;
-  border: 1px solid #ccc;
+  max-width: 100%;
+  overflow: hidden;
 }
 
-.budget-table thead {
-  display: table-header-group;
-  width: 100%;
-}
-
-.budget-table thead tr {
-  width: 100%;
-  display: table;
-  table-layout: fixed;
-  border-bottom: 2px solid #999; /* Linha mais grossa entre cabeçalho e corpo */
-}
-
-.budget-table tbody {
-  width: 100%;
-  display: table-row-group;
-}
-
-.budget-table tbody tr {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.budget-table th,
-.budget-table td {
-  border: 1px solid #ccc;
-  padding: 8px;
-  text-align: left;
-  word-wrap: break-word; /* Ensure text wraps */
-  overflow-wrap: break-word;
-  white-space: normal; /* Permite que o texto quebre em múltiplas linhas */
-  vertical-align: top; /* Alinha o conteúdo ao topo da célula */
-}
-
-.budget-table th.description,
-.budget-table td.description {
-  width: 55%; /* Aumentar mais o espaço para a descrição */
-  text-align: left;
-  white-space: normal; /* Permitir quebra de linha na descrição */
-  word-break: break-word; /* Quebrar palavras longas se necessário */
-  min-width: 200px; /* Garantir largura mínima */
-}
-
-.budget-table th.quantity,
-.budget-table td.quantity {
-  text-align: center;
-  width: 8%;
-  min-width: 40px; /* Garantir largura mínima */
-}
-
-.budget-table th.unit-price,
-.budget-table td.unit-price {
-  text-align: right;
-  width: 17%;
-  min-width: 80px; /* Garantir largura mínima */
-}
-
-.budget-table th.total,
-.budget-table td.total {
-  text-align: right;
-  width: 17%; /* Fixar a largura para garantir alinhamento consistente */
-  min-width: 80px; /* Garantir largura mínima */
+.budget-table th, .budget-table td {
+  border: 1px solid #ddd;
+  max-width: 100%;
+  overflow: visible;
+  padding: 4px 6px;
+  box-sizing: border-box;
+  display: table-cell !important;
+  visibility: visible !important;
 }
 
 .budget-table th {
-  background-color: #f5f5f5;
-  font-weight: bold; /* Deixar o cabeçalho em negrito */
-  color: var(--text-color);
-  text-transform: uppercase; /* Garantir que todos os cabeçalhos estejam em maiúsculas */
+  font-weight: bold;
+  background-color: #f4f4f4;
+}
+
+.budget-table td, .budget-table th {
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.budget-table td.unit-value, .budget-table td.total {
+  font-weight: 500;
+}
+
+.budget-table .description .item-price {
+  font-size: 11px;
+  margin-top: 4px;
+  color: #555;
 }
 
 .text-right {
@@ -271,11 +264,10 @@
 
 .budget-total {
   text-align: right;
-  font-size: 12px;
-  margin-top: 20px;
+  font-size: 1.2em;
+  margin-top: 10px;
   padding: 10px;
-  background-color: #f5f5f5;
-  border-radius: 8px;
+  background-color: #f9f9f9;
 }
 
 .action-buttons-container {
@@ -319,208 +311,111 @@
 
 .budget-items {
   margin-top: 20px;
-  overflow: hidden; /* Garante que o conteúdo não ultrapasse os limites */
+}
+
+/* Budget Items Table */
+.budget-items-table {
   width: 100%;
-  box-sizing: border-box;
-  padding: 0 5px; /* Adiciona um pequeno espaçamento interno */
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-bottom: 15px;
+  border: 1px solid #ddd;
+  page-break-inside: auto;
 }
 
-/* Estilos para as colunas usando colgroup */
-.budget-table .col-description {
-  width: 55%;
+.budget-items-table th,
+.budget-items-table td {
+  padding: 8px;
+  border: 1px solid #ddd;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.budget-table .col-quantity {
-  width: 8%;
+.budget-items-table th {
+  background-color: #f2f2f2;
+  font-weight: bold;
 }
 
-.budget-table .col-unit-price {
-  width: 17%;
+.budget-items-table th:nth-child(1),
+.budget-items-table td:nth-child(1) {
+  text-align: left;
+  word-break: break-word;
 }
 
-.budget-table .col-total {
-  width: 17%;
+.budget-items-table th:nth-child(2),
+.budget-items-table td:nth-child(2) {
+  text-align: center;
 }
 
+.budget-items-table th:nth-child(3),
+.budget-items-table td:nth-child(3) {
+  text-align: right;
+}
+
+.budget-items-table .total-row td {
+  font-weight: bold;
+  border-top: 2px solid #bbb;
+}
+
+.budget-items-table .total-label {
+  text-align: right !important;
+}
+
+.budget-items-table .total-value {
+  text-align: right !important;
+}
+
+/* Basic print styles */
 @media print {
-  @page {
-    size: A4;
-    margin: 0.5cm; /* Reduzir as margens para melhorar o uso do espaço */
-  }
-
-  /* Reset universal box-sizing para impressão */
-  * {
-    box-sizing: border-box !important;
-  }
-
   body {
-    background: white !important;
     font-size: 12px !important;
-    color: black !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  .budget-details-page {
+    width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
-    max-width: none !important;
-    width: 100% !important;
   }
-
+  
   .budget-print-layout {
-    padding: 0 !important;
-    margin: 0 !important;
+    padding: 10mm !important;
+    width: 100% !important;
     box-shadow: none !important;
-    width: 100% !important;
-    max-width: 210mm !important; /* Largura máxima para A4 */
   }
   
-  .budget-items {
-    width: 100% !important;
-    overflow: hidden !important;
-    padding: 0 2px !important; /* Reduzir ainda mais o padding lateral */
-    margin: 10px 0 !important;
-    box-sizing: border-box !important;
+  .action-buttons-container, 
+  .action-buttons, 
+  button {
+    display: none !important;
   }
-
-  .budget-table {
+  
+  table {
     width: 100% !important;
-    table-layout: fixed !important;
-    page-break-inside: avoid !important;
-    margin: 0 !important; /* Remover margens */
-    font-size: 10px !important; /* Reduzir o tamanho da fonte */
     border-collapse: collapse !important;
-    max-width: 100% !important;
-    box-sizing: border-box !important;
-    overflow: hidden !important;
-    border: 1px solid #000 !important;
-  }
-  
-  .budget-table thead {
-    display: table-header-group !important;
-    width: 100% !important;
-  }
-  
-  .budget-table thead tr {
-    width: 100% !important;
-    display: table !important;
-    table-layout: fixed !important;
-    border-bottom: 2px solid #000 !important;
-  }
-  
-  .budget-table tbody {
-    width: 100% !important;
-    display: table-row-group !important;
-  }
-  
-  .budget-table tbody tr {
-    display: table !important;
-    width: 100% !important;
     table-layout: fixed !important;
   }
   
-  .budget-table th,
-  .budget-table td {
-    padding: 6px 4px !important; /* Mais padding vertical */
-    font-size: 10px !important; /* Fonte menor para impressão */
-    border: 1px solid #000 !important;
-    overflow: visible !important; /* Permitir que o conteúdo seja visível */
+  table tr td:first-child {
+    width: 70% !important;
+    word-break: break-word !important;
     white-space: normal !important;
-    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    padding: 10px !important;
   }
-
-  .budget-table th.description,
-  .budget-table td.description {
-    width: 55% !important; /* Aumentar mais o espaço para a descrição */
-    text-align: left !important;
-    white-space: normal !important; /* Permitir quebra de linha na descrição */
-    word-break: break-word !important; /* Quebrar palavras longas se necessário */
-    min-width: 200px !important; /* Garantir largura mínima */
-  }
-
-  .budget-table th.quantity,
-  .budget-table td.quantity {
+  
+  table tr td:nth-child(2) {
+    width: 15% !important;
     text-align: center !important;
-    width: 8% !important; /* Ajustar porcentagem de largura */
-    min-width: 40px !important; /* Garantir largura mínima */
   }
-
-  .budget-table th.unit-price,
-  .budget-table td.unit-price {
+  
+  table tr td:nth-child(3) {
+    width: 15% !important;
     text-align: right !important;
-    width: 17% !important; /* Ajustar porcentagem de largura */
-    min-width: 80px !important; /* Garantir largura mínima */
   }
-
-  .budget-table th.total,
-  .budget-table td.total {
-    text-align: right !important;
-    width: 17% !important; /* Ajustar porcentagem de largura */
-    min-width: 80px !important; /* Garantir largura mínima */
-  }
-
-  .budget-table th {
-    background-color: #f5f5f5 !important;
-    font-weight: bold !important;
-    text-transform: uppercase !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  /* Estilos para as colunas no modo impressão */
-  .budget-table .col-description {
-    width: 55% !important;
-  }
-
-  .budget-table .col-quantity {
-    width: 8% !important;
-  }
-
-  .budget-table .col-unit-price {
-    width: 17% !important;
-  }
-
-  .budget-table .col-total {
-    width: 17% !important;
-  }
-
-  .action-buttons-container {
-    display: none;
-  }
-
-  .action-buttons {
-    display: none !important;
-  }
-
-  .company-header {
-    margin-bottom: 20px !important;
-  }
-
-  .budget-logo {
-    width: 150px !important;
-  }
-
-  .company-info {
-    font-size: 12px !important;
-  }
-
-  .budget-header h1 {
-    font-size: 16px !important;
-    font-weight: normal !important;
-  }
-
-  .budget-dates {
-    font-size: 12px !important;
-  }
-
-  .client-info {
+  
+  table td {
     border: 1px solid #000 !important;
-    padding: 15px !important;
   }
-
-  /* Hide all other elements */
-  body > *:not(.budget-details-page) {
-    display: none !important;
+  
+  @page {
+    margin: 10mm !important;
+    size: portrait !important;
   }
 }

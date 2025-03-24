@@ -5,23 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && cp -r public/*.js dist/ && cp public/_redirects dist/ && cp public/_routes.json dist/",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.48.1",
     "chart.js": "^4.4.8",
-    "date-fns": "^4.1.0",
     "html2canvas": "^1.4.1",
     "idb": "^8.0.2",
-    "jspdf": "^3.0.1",
-    "jspdf-autotable": "^5.0.2",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.4",
     "lodash.debounce": "^4.0.8",
     "md5": "^2.3.0",
     "react": "^18.2.0",
     "react-chartjs-2": "^5.3.0",
     "react-dom": "^18.2.0",
-    "react-icons": "^5.5.0",
     "react-router-dom": "^6.29.0",
     "react-select": "^5.10.0",
     "uuid": "^11.1.0"
@@ -30,7 +28,6 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.0.3",
-    "terser": "^5.39.0",
     "vite": "^6.2.1"
   }
 }

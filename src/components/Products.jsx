@@ -59,7 +59,6 @@ function Products() {
 
   useEffect(() => {
     loadOptions();
-    updateScreenPremiumAreaMinima(); // Add this line to execute when products are loaded
   }, [products]);
 
   const loadOptions = () => {
@@ -83,39 +82,23 @@ function Products() {
     setLoading(true);
     try {
       const data = await produtoService.getAll();
-      const formattedData = data.map(item => {
-        // Parse wave_pricing_data if it exists
-        const wavePricingData = item.wave_pricing_data ? JSON.parse(item.wave_pricing_data) : null;
-        
-        // Determine cost_price based on product type
-        let costPrice = '0';
-        if (item.modelo && item.modelo.toUpperCase() === 'WAVE' && wavePricingData) {
-          // For Wave products, cost price depends on the height and is stored in wave_pricing_data
-          // Default to the first tier price if available
-          costPrice = wavePricingData[0]?.price?.toString() || '0';
-        } else {
-          // For regular products (m²), cost price is stored in preco_custo
-          costPrice = item.preco_custo?.toString() || '0';
-        }
-        
-        return {
-          id: item.id,
-          product: item.produto,
-          model: item.modelo,
-          material: item.tecido,
-          name: item.nome,
-          code: item.codigo,
-          cost_price: costPrice,
-          profit_margin: item.margem_lucro?.toString() || '0',
-          sale_price: item.preco_venda?.toString() || '0',
-          calculation_method: item.metodo_calculo,
-          altura_minima: item.altura_minima || '',
-          largura_minima: item.largura_minima || '',
-          largura_maxima: item.largura_maxima || '',
-          area_minima: item.area_minima || '',
-          wave_pricing: wavePricingData || initialProductState.wave_pricing
-        };
-      });
+      const formattedData = data.map(item => ({
+        id: item.id,
+        product: item.produto,
+        model: item.modelo,
+        material: item.tecido,
+        name: item.nome,
+        code: item.codigo,
+        cost_price: item.preco_custo?.toString() || '0',
+        profit_margin: item.margem_lucro?.toString() || '0',
+        sale_price: item.preco_venda?.toString() || '0',
+        calculation_method: item.metodo_calculo,
+        altura_minima: item.altura_minima || '',
+        largura_minima: item.largura_minima || '',
+        largura_maxima: item.largura_maxima || '',
+        area_minima: item.area_minima || '',
+        wave_pricing: item.wave_pricing_data ? JSON.parse(item.wave_pricing_data) : initialProductState.wave_pricing
+      }));
       setProducts(formattedData);
     } catch (err) {
       setError('Erro ao carregar produtos: ' + err.message);
@@ -126,14 +109,11 @@ function Products() {
 
   const calculateSalePrice = (costPrice, profitMargin) => {
     if (newProduct.model.toUpperCase() === 'WAVE') {
-      // For Wave products, get the price based on height from wave_pricing data
-      const height = parseFloat(newProduct.altura_minima) || 0;
-      const basePrice = getWavePrice(height);
+      const basePrice = getWavePrice(parseFloat(newProduct.altura_minima) || 0);
       const margin = parseFloat(profitMargin) || 0;
       const profitAmount = (basePrice * margin) / 100;
       return basePrice + profitAmount;
     }
-    // For regular products, calculate using the cost price and margin
     const cost = parseFloat(costPrice) || 0;
     const margin = parseFloat(profitMargin) || 0;
     return cost + (cost * (margin / 100));
@@ -143,7 +123,7 @@ function Products() {
     const pricing = wavePricing.wave_pricing;
     for (const tier of pricing) {
       if (height >= tier.min_height && height <= tier.max_height) {
-        return parseFloat(tier.price) || 0;
+        return tier.price;
       }
     }
     return 0;
@@ -224,22 +204,10 @@ function Products() {
         }
       }
 
-      // Prepare product data for submission
-      let productData = {};
-      
-      if (newProduct.model.toUpperCase() === 'WAVE') {
-        // For Wave products, include the wave_pricing_data
-        productData = {
-          ...newProduct,
-          wave_pricing_data: JSON.stringify(newProduct.wave_pricing)
-        };
-      } else {
-        // For standard products
-        productData = {
-          ...newProduct,
-          sale_price: calculateSalePrice(newProduct.cost_price, newProduct.profit_margin)
-        };
-      }
+      const productData = {
+        ...newProduct,
+        sale_price: calculateSalePrice(newProduct.cost_price, newProduct.profit_margin)
+      };
 
       if (editingProductId) {
         await produtoService.update(editingProductId, productData);
@@ -337,68 +305,6 @@ function Products() {
     setNewProduct(initialProductState);
   };
 
-  const updateScreenPremiumAreaMinima = async () => {
-    try {
-      // Find the SCREEN 0,5 PREMIUM product and PARIS BK product
-      const specialMinAreaProducts = products.filter(
-        product => product.nome === 'SCREEN 0,5 PREMIUM' || 
-                  product.nome === 'SCREEN 0.5 PREMIUM' ||
-                  product.nome === 'PARIS BK'
-      );
-      
-      // Process each product that needs a minimum area of 1.5m²
-      specialMinAreaProducts.forEach(product => {
-        const targetMinArea = 1.5;
-        const needsUpdate = 
-          product.area_minima !== targetMinArea ||
-          Math.abs(parseFloat(product.largura_minima) * parseFloat(product.altura_minima) - targetMinArea) > 0.01;
-          
-        if (needsUpdate) {
-          console.log(`Updating ${product.nome} minimum values:`);
-          console.log('- area_minima from', product.area_minima, 'to', targetMinArea);
-          
-          // Calculate square dimensions for the minimum area (1.5m²)
-          const minDimension = Math.sqrt(targetMinArea);
-          console.log('- largura_minima from', product.largura_minima, 'to', minDimension.toFixed(2));
-          console.log('- altura_minima from', product.altura_minima, 'to', minDimension.toFixed(2));
-          
-          // Update the product with the new minimum values
-          const updatedProduct = {
-            ...product,
-            area_minima: targetMinArea,
-            largura_minima: minDimension,
-            altura_minima: minDimension
-          };
-          
-          // Convert to the format expected by the update function
-          const formattedProduct = {
-            product: updatedProduct.produto,
-            model: updatedProduct.modelo,
-            material: updatedProduct.tecido,
-            name: updatedProduct.nome,
-            code: updatedProduct.codigo,
-            cost_price: updatedProduct.preco_custo,
-            profit_margin: updatedProduct.margem_lucro,
-            sale_price: updatedProduct.preco_venda,
-            calculation_method: updatedProduct.metodo_calculo,
-            altura_minima: minDimension,
-            largura_minima: minDimension,
-            largura_maxima: updatedProduct.largura_maxima,
-            area_minima: targetMinArea
-          };
-          
-          // Update the product in the database
-          produtoService.update(product.id, formattedProduct);
-          
-          // Refresh the products list
-          loadProducts();
-        }
-      });
-    } catch (error) {
-      console.error('Error updating SCREEN 0,5 PREMIUM and PARIS BK:', error);
-    }
-  };
-
   if (loading) return <div>Carregando...</div>;
   if (error) return <div>Erro: {error}</div>;
 
@@ -439,8 +345,9 @@ function Products() {
             </tr>
           </thead>
           <tbody>
-            {filteredProducts.map(product => (
+            {filteredProducts.map((product, index) => (
               <tr key={product.id}>
+                <td>Produto {index + 1}</td>
                 <td>{product.product}</td>
                 <td>{product.model}</td>
                 <td>{product.material}</td>
