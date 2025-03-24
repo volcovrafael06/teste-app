@@ -29,6 +29,248 @@ ChartJS.register(
   ArcElement
 );
 
+// Usar default de 60% do valor de venda quando o custo é desconhecido
+const DEFAULT_COST_RATIO = 0.6;
+
+// Função para processar cada item do orçamento
+const processarItemOrcamento = async (itemDoJson, configuracoes) => {
+  try {
+    if (!itemDoJson || !itemDoJson.produto_id) {
+      throw new Error('Item inválido ou sem ID de produto');
+    }
+    
+    // Buscar o produto no banco de dados
+    const { data: produtoDB, error: produtoError } = await supabase
+      .from('produtos')
+      .select('*')
+      .eq('id', itemDoJson.produto_id)
+      .single();
+    
+    if (produtoError) {
+      throw new Error(`Falha ao buscar produto: ${produtoError.message}`);
+    }
+    
+    // Garantir valores numéricos seguros
+    const parseFloatSafe = (valor) => {
+      const parsed = parseFloat(valor);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+    
+    // Criar um novo objeto para o item processado
+    let itemProcessado = {
+      ...itemDoJson,                          
+      produto_id: itemDoJson.produto_id,
+      nome: produtoDB?.nome || 'Produto não encontrado',
+      largura: parseFloatSafe(itemDoJson.largura),
+      altura: parseFloatSafe(itemDoJson.altura),
+      area: parseFloatSafe(itemDoJson.largura) * parseFloatSafe(itemDoJson.altura),
+      
+      // Para BANDÔ
+      bando: itemDoJson.bando || false,
+      custo_bando: parseFloatSafe(itemDoJson.valor_bando_custo),
+      valor_bando: parseFloatSafe(itemDoJson.valor_bando),
+      
+      // Para TRILHO
+      trilho_tipo: itemDoJson.trilho_tipo || '',
+      custo_trilho: 0, // Será calculado abaixo com base na largura
+      valor_trilho: parseFloatSafe(itemDoJson.valor_trilho),
+      
+      // Para INSTALAÇÃO
+      instalacao: itemDoJson.instalacao || false,
+      valor_instalacao: parseFloatSafe(itemDoJson.valor_instalacao),
+      
+      // Para valores totais
+      valor_total: parseFloatSafe(itemDoJson.subtotal),
+      
+      // Inicializando outros valores para evitar undefined
+      custo_acessorios: parseFloatSafe(itemDoJson.custo_acessorios),
+      custo_unitario: 0,
+      custo_material: 0,
+      custo_total: 0
+    };
+    
+    // Buscar preço do trilho com base no tipo selecionado
+    if (itemProcessado.trilho_tipo) {
+      try {
+        // Buscar informações do tipo de trilho da tabela configuracoes
+        const { data: configData, error: configError } = await supabase
+          .from('configuracoes')
+          .select('trilho_redondo_com_comando, trilho_redondo_sem_comando, trilho_slim_com_comando, trilho_slim_sem_comando, trilho_quadrado_com_rodizio_em_gancho, trilho_motorizado')
+          .single();
+          
+        if (!configError && configData) {
+          // Mapear o tipo de trilho para a coluna correta
+          const railTypeMap = {
+            'trilho_redondo_com_comando': 'trilho_redondo_com_comando',
+            'trilho_redondo_sem_comando': 'trilho_redondo_sem_comando',
+            'trilho_slim_com_comando': 'trilho_slim_com_comando',
+            'trilho_slim_sem_comando': 'trilho_slim_sem_comando',
+            'trilho_quadrado_com_rodizio_em_gancho': 'trilho_quadrado_com_rodizio_em_gancho',
+            'trilho_motorizado': 'trilho_motorizado'
+          };
+          
+          const configKey = railTypeMap[itemProcessado.trilho_tipo];
+          
+          if (configKey && configData[configKey] !== undefined) {
+            // Obter valores do trilho
+            const precoVendaUnitario = parseFloatSafe(configData[configKey]); 
+            const largura = parseFloatSafe(itemProcessado.largura);
+            
+            // Calcular o valor de venda baseado na tabela se não especificado
+            if (!itemProcessado.valor_trilho || itemProcessado.valor_trilho === 0) {
+              itemProcessado.valor_trilho = largura * precoVendaUnitario;
+            }
+            
+            // CORREÇÃO: Usar o valor do trilho como custo sem assumir margem
+            // O custo do trilho é exatamente o mesmo que o valor de venda
+            itemProcessado.custo_trilho = itemProcessado.valor_trilho;
+            
+            // Log para depuração
+            console.log(`Trilho calculado: tipo=${itemProcessado.trilho_tipo}, largura=${largura}`);
+            console.log(`Preço unitário=${precoVendaUnitario}/m, Valor total=${itemProcessado.valor_trilho}`);
+            console.log(`Custo total=${itemProcessado.custo_trilho} (igual ao valor de venda)`);
+          } else {
+            console.warn(`Configuração não encontrada para o trilho: ${itemProcessado.trilho_tipo}`);
+            // Usar valor de custo informado como fallback
+            itemProcessado.custo_trilho = parseFloatSafe(itemDoJson.valor_trilho_custo || (itemDoJson.valor_trilho * 0.6));
+          }
+        } else {
+          console.warn(`Configurações não encontradas: ${configError?.message}`);
+          // Usar valor de custo informado como fallback
+          itemProcessado.custo_trilho = parseFloatSafe(itemDoJson.valor_trilho_custo || (itemDoJson.valor_trilho * 0.6));
+        }
+      } catch (error) {
+        console.error('Erro ao buscar preço do trilho:', error);
+        // Usar valor de custo informado como fallback
+        itemProcessado.custo_trilho = parseFloatSafe(itemDoJson.valor_trilho_custo || (itemDoJson.valor_trilho * 0.6));
+      }
+    } else if (itemDoJson.valor_trilho_custo || itemDoJson.valor_trilho) {
+      // Se não tiver tipo mas tiver valor, usar o valor informado
+      itemProcessado.custo_trilho = parseFloatSafe(itemDoJson.valor_trilho_custo || (itemDoJson.valor_trilho * 0.6));
+    }
+    
+    // Calcular o custo unitário e material com base no tipo de produto
+    if (produtoDB?.nome?.toUpperCase().includes('SCREEN')) {
+      // Para produtos SCREEN
+      itemProcessado.custo_unitario = parseFloatSafe(configuracoes?.screen_custo) || 109.89;
+      itemProcessado.custo_material = itemProcessado.area * itemProcessado.custo_unitario;
+    } 
+    else if (produtoDB?.nome?.toUpperCase().includes('WAVE') || 
+             produtoDB?.modelo?.toUpperCase() === 'WAVE' || 
+             produtoDB?.nome?.toUpperCase().includes('COLOMBIA')) {
+      // Processar produtos WAVE ou COLOMBIA
+      try {
+        let custoUnitario = 0;
+        
+        if (produtoDB.wave_pricing_data || produtoDB.pricing_data) {
+          // Calcular com base na tabela de preços por altura
+          let pricingData = produtoDB.wave_pricing_data || produtoDB.pricing_data;
+          
+          const waveData = typeof pricingData === 'string' 
+            ? JSON.parse(pricingData) 
+            : pricingData;
+          
+          // Verificar formato dos dados de pricing
+          const isNewFormat = waveData && waveData.length > 0 && 'min_height' in waveData[0];
+          
+          if (isNewFormat) {
+            // Novo formato: [{"min_height":0,"max_height":2.5,"price":"138","sale_price":"303.60"}, ...]
+            // Encontrar a faixa de preço correspondente à altura do item
+            const altura = parseFloatSafe(itemProcessado.altura);
+            const priceTier = waveData.find(tier => 
+              altura >= parseFloatSafe(tier.min_height) && 
+              altura <= parseFloatSafe(tier.max_height)
+            );
+            
+            if (priceTier) {
+              custoUnitario = parseFloatSafe(priceTier.price);
+              itemProcessado.preco_venda = parseFloatSafe(priceTier.sale_price);
+            }
+          } else {
+            // Formato antigo: com campos "altura", "custo", "venda"
+            const alturaArredondada = Math.ceil(itemProcessado.altura * 10) / 10;
+            const precoPorAltura = waveData.find(w => parseFloatSafe(w.altura) === alturaArredondada);
+            
+            if (precoPorAltura) {
+              custoUnitario = parseFloatSafe(precoPorAltura.custo);
+              itemProcessado.preco_venda = parseFloatSafe(precoPorAltura.venda);
+            }
+          }
+        }
+        
+        // Se não tiver preço específico, usar custo padrão ou calcular baseado no valor total
+        if (custoUnitario <= 0) {
+          // Verificar se temos o preço de custo
+          if (produtoDB?.preco_custo && parseFloatSafe(produtoDB.preco_custo) > 0) {
+            custoUnitario = parseFloatSafe(produtoDB.preco_custo);
+          } else {
+            // Calcular um custo aproximado baseado no valor total
+            const valorMaterial = itemProcessado.valor_total - itemProcessado.valor_trilho - 
+                                  itemProcessado.valor_instalacao - itemProcessado.valor_bando;
+            
+            // Custo unitário baseado em uma margem aproximada de 40%
+            custoUnitario = itemProcessado.area > 0 ? (valorMaterial / itemProcessado.area) * 0.6 : 0;
+          }
+        }
+        
+        itemProcessado.custo_unitario = custoUnitario;
+        itemProcessado.custo_material = itemProcessado.area * itemProcessado.custo_unitario;
+      } catch (error) {
+        console.error('Erro ao processar dados de WAVE/COLOMBIA:', error);
+        // Manter o processamento mesmo com erro, usando valores padrão
+        itemProcessado.custo_unitario = parseFloatSafe(produtoDB?.preco_custo) || 0;
+        itemProcessado.custo_material = itemProcessado.area * itemProcessado.custo_unitario;
+      }
+    } 
+    else {
+      // Para outros produtos padrão
+      itemProcessado.custo_unitario = parseFloatSafe(produtoDB?.preco_custo) || 0;
+      itemProcessado.custo_material = itemProcessado.area * itemProcessado.custo_unitario;
+      
+      // Calcular preço por m²
+      if (itemProcessado.area > 0) {
+        const valorCortinaSemExtras = itemProcessado.valor_total - itemProcessado.valor_trilho - 
+                                      itemProcessado.valor_bando - itemProcessado.valor_instalacao;
+        itemProcessado.preco_venda = valorCortinaSemExtras / itemProcessado.area;
+      }
+    }
+    
+    // CÁLCULO DO CUSTO TOTAL (OBJETIVO PRINCIPAL DA CORREÇÃO)
+    // Garantir que o custo total inclua todos os componentes
+    const custoMaterial = parseFloatSafe(itemProcessado.custo_material);
+    const custoTrilho = parseFloatSafe(itemProcessado.custo_trilho);
+    const custoBando = parseFloatSafe(itemProcessado.custo_bando);
+    const custoAcessorios = parseFloatSafe(itemProcessado.custo_acessorios);
+    const valorInstalacao = parseFloatSafe(itemProcessado.valor_instalacao);
+    
+    // Calcular custo total incluindo TODOS os componentes (incluindo instalação)
+    const custoTotal = custoMaterial + custoTrilho + custoBando + custoAcessorios + valorInstalacao;
+    
+    // Atualizar o item processado com o custo total calculado
+    itemProcessado.custo_total = custoTotal;
+    
+    // Garantir que o custo total nunca seja zero quando há valor total
+    if (itemProcessado.valor_total > 0 && itemProcessado.custo_total <= 0) {
+      // Se não conseguimos calcular o custo, vamos estimar com base em uma margem padrão de 40%
+      itemProcessado.custo_total = itemProcessado.valor_total * 0.6;
+      
+      // Distribuir o custo total entre os componentes
+      if (itemProcessado.area > 0) {
+        itemProcessado.custo_unitario = itemProcessado.custo_total / itemProcessado.area;
+        itemProcessado.custo_material = itemProcessado.area * itemProcessado.custo_unitario;
+      }
+    }
+    
+    // Incluir o objeto do produto completo para referência
+    itemProcessado.produto = produtoDB;
+    
+    return itemProcessado;
+  } catch (error) {
+    console.error('Erro ao processar item do orçamento:', error);
+    throw error; // Repassar o erro para tratamento na função chamadora
+  }
+};
+
 function ReportsNew({ budgets = [], customers = [] }) {
   // Estados principais
   const [orcamentos, setOrcamentos] = useState([]);
@@ -81,6 +323,7 @@ function ReportsNew({ budgets = [], customers = [] }) {
   const [activeTab, setActiveTab] = useState('resumo');
   const [detalhamentoVisivel, setDetalhamentoVisivel] = useState(false);
   const [orcamentoDetalhado, setOrcamentoDetalhado] = useState(null);
+  const [loadingDetalhado, setLoadingDetalhado] = useState(false);
 
   // Buscar dados iniciais
   const loadInitialData = async () => {
@@ -225,7 +468,7 @@ function ReportsNew({ budgets = [], customers = [] }) {
   };
 
   // Processar dados quando orçamentos, produtos ou filtros mudarem
-  const processFinancialData = useCallback(() => {
+  const processFinancialData = useCallback(async () => {
     try {
       const filteredOrcamentos = applyFilters();
       
@@ -275,7 +518,7 @@ function ReportsNew({ budgets = [], customers = [] }) {
                 JSON.parse(orcamento.produtos) : orcamento.produtos;
             }
           } catch (error) {
-            console.error(`Erro ao parsear produtos do orçamento ${orcamento.id}:`, error);
+            console.error(`Erro ao parsear produtos_json do orçamento ${orcamento.id}:`, error);
             produtosOrcamento = [];
           }
           
@@ -284,152 +527,15 @@ function ReportsNew({ budgets = [], customers = [] }) {
           }
           
           // Processar produtos do orçamento
-          const produtosProcessados = produtosOrcamento.map(produto => {
-            try {
-              // Encontrar produto no catálogo
-              const produtoCatalogo = produtos.find(p => String(p.id) === String(produto.produto_id));
-              
-              // Calcular área
-              const largura = parseFloat(produto.largura || 0);
-              const altura = parseFloat(produto.altura || 0);
-              const area = largura * altura;
-              
-              // Calcular valores
-              const subtotal = parseFloat(produto.subtotal || 0);
-              const valorBando = parseFloat(produto.valor_bando || 0);
-              let custoBando = parseFloat(produto.valor_bando_custo || 0);
-              const valorTrilho = parseFloat(produto.valor_trilho || 0);
-              let custoTrilho = valorTrilho * 0.6; // Estimativa: custo é 60% do valor
-              const valorInstalacao = parseFloat(produto.valor_instalacao || 0);
-              
-              // Calcular custo do produto
-              let custoProduto = 0;
-              
-              // Determinar o custo unitário (por m²) corretamente
-              if (produtoCatalogo) {
-                if (produtoCatalogo.modelo?.toUpperCase() === 'SCREEN' || 
-                    produtoCatalogo.nome?.toUpperCase().includes('SCREEN') || 
-                    produtoCatalogo.metodo_calculo === 'area') {
-                  // Para produtos de área (como SCREEN), preco_custo já é o custo por m²
-                  const custoM2 = parseFloat(produtoCatalogo.preco_custo) || 0;
-                  custoProduto = largura * altura * custoM2;
-                  console.log(`SCREEN: Custo por m² = R$ ${custoM2.toFixed(2)}, Área = ${(largura * altura).toFixed(2)}m², Total = R$ ${custoProduto.toFixed(2)}`);
-                } else if (produtoCatalogo.modelo?.toUpperCase() === 'WAVE' && produtoCatalogo.wave_pricing) {
-                  // Find the correct height tier
-                  const heightValue = parseFloat(altura) || 0;
-                  let priceTier = null;
-                  
-                  for (const tier of produtoCatalogo.wave_pricing) {
-                    if (heightValue >= parseFloat(tier.min_height) && 
-                        heightValue <= parseFloat(tier.max_height)) {
-                      priceTier = tier;
-                      break;
-                    }
-                  }
-                  
-                  // If we found a tier, use it to calculate price based on width
-                  if (priceTier) {
-                    const basePrice = parseFloat(priceTier.price) || 0;
-                    custoProduto = basePrice * largura;
-                    console.log(`Custo Wave calculado: ${custoProduto} = ${basePrice} * ${largura}`);
-                  } else if (produtoCatalogo.wave_pricing.length > 0) {
-                    // Fallback to first tier if no match found
-                    const basePrice = parseFloat(produtoCatalogo.wave_pricing[0].price) || 0;
-                    custoProduto = basePrice * largura;
-                    console.log(`Custo Wave (fallback) calculado: ${custoProduto} = ${basePrice} * ${largura}`);
-                  }
-                } else if (produtoCatalogo.metodo_calculo === 'linear') {
-                  // For linear calculation, use perimeter
-                  const costPrice = parseFloat(produtoCatalogo.preco_custo) || 0;
-                  custoProduto = (largura + altura) * 2 * costPrice;
-                  console.log(`Custo linear calculado: ${custoProduto} = (${largura} + ${altura}) * 2 * ${costPrice}`);
-                } else if (produtoCatalogo.metodo_calculo === 'altura') {
-                  // For height-based products (non-Wave)
-                  const costPrice = parseFloat(produtoCatalogo.preco_custo) || 0;
-                  custoProduto = altura * costPrice;
-                  console.log(`Custo altura calculado: ${custoProduto} = ${altura} * ${costPrice}`);
-                } else {
-                  // Default unit calculation
-                  const costPrice = parseFloat(produtoCatalogo.preco_custo) || 0;
-                  custoProduto = costPrice;
-                  console.log(`Custo unitário calculado: ${custoProduto} = ${costPrice}`);
-                }
-              } else {
-                // Se não encontrar o produto, estimar custo como 60% do valor
-                custoProduto = subtotal * 0.6;
-              }
-              
-              // Calcular custos de bandô e trilho (da mesma forma que a versão anterior)
-              // Buscar dados de configuração para bandô e trilho
-              try {
-                // Get rail pricing from database if available
-                const { data: railPricing } = supabase
-                  .from('rail_pricing')
-                  .select('*');
-                
-                if (railPricing && produto.trilho_tipo) {
-                  const railData = railPricing.find(rail => rail.rail_type === produto.trilho_tipo);
-                  if (railData) {
-                    custoTrilho = largura * (parseFloat(railData.cost_price) || 0);
-                    console.log(`Custo trilho calculado do banco: ${custoTrilho} = ${largura} * ${railData.cost_price}`);
-                  }
-                }
-                
-                // Get band pricing from configurations if available
-                const { data: configData } = supabase
-                  .from('configuracoes')
-                  .select('*')
-                  .single();
-                
-                if (configData && produto.bando) {
-                  custoBando = largura * (parseFloat(configData.bando_custo) || 0);
-                  console.log(`Custo bandô calculado do banco: ${custoBando} = ${largura} * ${configData.bando_custo}`);
-                }
-              } catch (error) {
-                console.error('Erro ao buscar preços de bandô/trilho:', error);
-                // Keep fallback values from above
-              }
-              
-              // Valores totais
-              const custoTotal = custoProduto + custoBando + custoTrilho;
-              const valorTotal = subtotal + valorBando + valorTrilho;
-              const lucro = valorTotal - custoTotal;
-              const margemLucro = valorTotal > 0 ? (lucro / valorTotal) * 100 : 0;
-              
-              return {
-                ...produto,
-                nome: produtoCatalogo?.nome || 'Produto não identificado',
-                area,
-                dimensoes: { largura, altura, area },
-                custos: {
-                  produto: custoProduto,
-                  bando: custoBando,
-                  trilho: custoTrilho,
-                  total: custoTotal
-                },
-                valores: {
-                  produto: subtotal,
-                  bando: valorBando,
-                  trilho: valorTrilho,
-                  instalacao: valorInstalacao,
-                  total: valorTotal
-                },
-                lucro,
-                margemLucro
-              };
-            } catch (err) {
-              console.error('Erro ao processar produto:', err);
-              return null;
-            }
-          }).filter(produto => produto !== null);
+          const produtosProcessados = produtosOrcamento.map(produto => processarItemOrcamento(produto, produtos, orcamento)).filter(produto => produto !== null);
           
           // Encontrar cliente
           const cliente = clientes.find(c => c.id === orcamento.cliente_id);
           
           // Calcular totais do orçamento
-          const custoTotal = produtosProcessados.reduce((sum, p) => sum + p.custos.total, 0);
+          const custoTotal = produtosProcessados.reduce((sum, p) => sum + p.custo_total, 0);
           const valorTotal = parseFloat(orcamento.valor_total || 0);
-          const valorInstalacaoTotal = produtosProcessados.reduce((sum, p) => sum + p.valores.instalacao, 0);
+          const valorInstalacaoTotal = produtosProcessados.reduce((sum, p) => sum + p.valor_instalacao, 0);
           const lucro = valorTotal - custoTotal;
           const margemLucro = valorTotal > 0 ? (lucro / valorTotal) * 100 : 0;
           
@@ -457,9 +563,9 @@ function ReportsNew({ budgets = [], customers = [] }) {
       // Dados para DRE
       const totalReceitas = orcamentosProcessados.reduce((sum, o) => sum + o.valorTotal, 0);
       const totalCustosProdutos = orcamentosProcessados.reduce((sum, o) => 
-        sum + o.produtosProcessados.reduce((s, p) => s + p.custos.produto, 0), 0);
+        sum + o.produtosProcessados.reduce((s, p) => s + p.custo_material, 0), 0);
       const totalCustosMateriais = orcamentosProcessados.reduce((sum, o) => 
-        sum + o.produtosProcessados.reduce((s, p) => s + p.custos.bando + p.custos.trilho, 0), 0);
+        sum + o.produtosProcessados.reduce((s, p) => s + p.custo_bando + p.custo_trilho, 0), 0);
       const totalCustosInstalacao = orcamentosProcessados.reduce((sum, o) => sum + o.valorInstalacaoTotal * 0.5, 0); // Estimativa: custo de instalação é 50% do valor
       
       // Estimativas para completar o DRE
@@ -497,7 +603,7 @@ function ReportsNew({ budgets = [], customers = [] }) {
           }
           
           produtosContagem[produtoId].quantidade += 1;
-          produtosContagem[produtoId].valorTotal += produto.valores.total;
+          produtosContagem[produtoId].valorTotal += produto.valor_total;
         });
       });
       
@@ -824,174 +930,284 @@ function ReportsNew({ budgets = [], customers = [] }) {
     }
   }, [filterOptions]);
 
-  // Função para exibir os detalhes de custo de um orçamento
-  const mostrarDetalhamentoCustos = (orcamento) => {
+  // Processar detalhamento de orçamento para modal
+  const processarDetalhamento = async (orcamentoId) => {
     try {
-      console.log('Processando detalhamento para orçamento:', orcamento);
+      setLoadingDetalhado(true);
+      console.log('Iniciando processamento detalhado para orçamento ID:', orcamentoId);
+      
+      if (!orcamentoId) {
+        throw new Error('ID do orçamento não fornecido');
+      }
+      
+      // Buscar o orçamento completo no Supabase
+      const { data: orcamento, error: orcamentoError } = await supabase
+        .from('orcamentos')
+        .select('*, clientes(id, name)')
+        .eq('id', orcamentoId)
+        .single();
+      
+      if (orcamentoError) {
+        console.error('Erro ao buscar orçamento:', orcamentoError);
+        throw new Error(`Falha ao buscar orçamento: ${orcamentoError.message}`);
+      }
+      
+      if (!orcamento) {
+        throw new Error('Orçamento não encontrado');
+      }
+      
+      console.log('Orçamento encontrado:', { id: orcamento.id, number: orcamento.numero_orcamento });
       
       // Verificar e parsear o campo produtos_json
       let itens = [];
+      let acessorios = [];
       
-      if (orcamento.produtos_json) {
-        try {
-          // Tentar parsear o JSON dos produtos
-          itens = JSON.parse(orcamento.produtos_json);
-          console.log('Produtos encontrados no JSON:', itens);
-        } catch (err) {
-          console.error('Erro ao parsear produtos_json:', err);
-          setError('Formato inválido nos dados do orçamento.');
-          return;
-        }
-      } else if (orcamento.produtosProcessados && Array.isArray(orcamento.produtosProcessados)) {
-        // Usar produtos já processados se disponíveis
-        itens = orcamento.produtosProcessados;
-        console.log('Usando produtos já processados:', itens);
-      } else if (orcamento.itens && Array.isArray(orcamento.itens)) {
-        // Fallback para o campo itens (caso exista)
-        itens = orcamento.itens;
-        console.log('Usando campo itens:', itens);
+      if (!orcamento.produtos_json) {
+        throw new Error('Este orçamento não possui produtos detalhados (produtos_json vazio)');
       }
       
-      // Verificar se temos itens para processar
-      if (!itens || !Array.isArray(itens) || itens.length === 0) {
-        console.error('Orçamento sem itens após processamento:', orcamento);
-        setError('Este orçamento não possui itens para detalhar.');
+      // Parsear o JSON com tratamento de erros
+      try {
+        itens = JSON.parse(orcamento.produtos_json);
+        console.log(`Encontrados ${itens.length} produtos no orçamento`);
+        
+        if (orcamento.acessorios_json) {
+          acessorios = JSON.parse(orcamento.acessorios_json);
+          console.log(`Encontrados ${acessorios.length} acessórios no orçamento`);
+        }
+      } catch (parseError) {
+        console.error('Erro ao parsear JSON:', parseError);
+        throw new Error(`Falha ao processar dados do orçamento: ${parseError.message}`);
+      }
+      
+      // Para processamento em paralelo dos itens do orçamento com melhor tratamento de erros
+      let itensProcessados = [];
+      let acessoriosProcessados = [];
+      
+      try {
+        // Buscar configurações uma vez para usar em todo o processamento
+        const { data: configuracoes, error: configError } = await supabase
+          .from("configuracoes")
+          .select("*")
+          .single();
+          
+        if (configError) {
+          console.warn('Erro ao carregar configurações:', configError);
+          // Continuar mesmo sem configurações, usando valores padrão
+        }
+        
+        // Processar itens em paralelo com tratamento de erros em cada item
+        itensProcessados = await Promise.all(
+          itens.map(async (itemDoJson, index) => {
+            try {
+              return await processarItemOrcamento(itemDoJson, configuracoes);
+            } catch (itemError) {
+              console.error(`Erro ao processar item #${index}:`, itemError);
+              // Retornar um objeto de erro, mas não interromper todo o processamento
+              return {
+                ...itemDoJson,
+                nome: `Erro no item #${index}`,
+                erro: itemError.message,
+                custo_material: 0,
+                custo_trilho: 0,
+                custo_bando: 0, 
+                custo_acessorios: 0,
+                valor_instalacao: 0,
+                custo_total: 0,
+                valor_total: parseFloat(itemDoJson.subtotal || 0)
+              };
+            }
+          })
+        );
+        
+        // Processar acessórios em paralelo
+        if (acessorios.length > 0) {
+          acessoriosProcessados = await Promise.all(
+            acessorios.map(async (acessorioDoJson, index) => {
+              try {
+                // Buscar o acessório no banco de dados
+                const { data: acessorioDB, error: acessorioError } = await supabase
+                  .from('produtos')
+                  .select('*')
+                  .eq('id', acessorioDoJson.produto_id)
+                  .single();
+                
+                if (acessorioError) {
+                  throw new Error(`Falha ao buscar dados do acessório: ${acessorioError.message}`);
+                }
+                
+                return {
+                  ...acessorioDoJson,
+                  nome: acessorioDB?.nome || 'Acessório não encontrado',
+                  preco: parseFloat(acessorioDB?.preco_venda) || 0,
+                  custo: parseFloat(acessorioDB?.preco_custo) || 0,
+                  quantidade: parseInt(acessorioDoJson.quantidade) || 1,
+                  valor_total: parseInt(acessorioDoJson.quantidade || 1) * parseFloat(acessorioDB?.preco_venda || 0)
+                };
+              } catch (acessorioError) {
+                console.error(`Erro ao processar acessório #${index}:`, acessorioError);
+                return {
+                  ...acessorioDoJson,
+                  nome: `Erro no acessório #${index}`,
+                  erro: acessorioError.message,
+                  preco: 0,
+                  custo: 0,
+                  quantidade: 1,
+                  valor_total: 0
+                };
+              }
+            })
+          );
+        }
+      } catch (processingError) {
+        console.error('Erro durante o processamento de itens:', processingError);
+        throw new Error(`Falha no processamento: ${processingError.message}`);
+      }
+      
+      // Preparar o objeto de detalhamento com valores seguros
+      const detalhamento = {
+        id: orcamento.id,
+        numero_orcamento: orcamento.numero_orcamento || 'SEM NÚMERO',
+        cliente: orcamento.clientes?.name || 'Cliente não identificado',
+        data: orcamento.created_at ? new Date(orcamento.created_at).toLocaleDateString('pt-BR') : 'Data desconhecida',
+        status: orcamento.status || 'pendente',
+        valor_total: parseFloat(orcamento.valor_total) || 0,
+        itens_detalhados: itensProcessados || [],
+        acessorios_detalhados: acessoriosProcessados || [],
+        observacao: orcamento.observacao || ''
+      };
+      
+      // Log de sucesso
+      console.log('Processamento concluído com sucesso. Resumo:', {
+        id: detalhamento.id,
+        numero: detalhamento.numero_orcamento,
+        total_itens: detalhamento.itens_detalhados.length,
+        total_acessorios: detalhamento.acessorios_detalhados.length,
+        valor_total: detalhamento.valor_total
+      });
+      
+      // Atualizar o estado com o detalhamento processado
+      setOrcamentoDetalhado(detalhamento);
+      setDetalhamentoVisivel(true);
+      setLoadingDetalhado(false);
+      
+    } catch (error) {
+      // Log detalhado do erro
+      const errorDetails = {
+        message: error?.message || 'Erro desconhecido',
+        stack: error?.stack,
+        name: error?.name,
+        code: error?.code
+      };
+      
+      console.error('Falha no processamento de detalhamento - dados completos:', errorDetails);
+      setError(`Erro: ${errorDetails.message}`);
+      
+      // De acordo com a memória do usuário, inicializar todos os estados para valores vazios
+      setOrcamentoDetalhado({
+        id: orcamentoId || 0,
+        numero_orcamento: 'Erro',
+        cliente: 'Erro ao carregar dados',
+        data: 'N/A',
+        status: 'erro',
+        valor_total: 0,
+        itens_detalhados: [],
+        acessorios_detalhados: [],
+        observacao: `Falha no processamento: ${errorDetails.message}`
+      });
+      
+      setDetalhamentoVisivel(true);
+      setLoadingDetalhado(false);
+    }
+  };
+
+  // Função para exibir os detalhes de custo de um orçamento
+  const mostrarDetalhamentoCustos = async (orcamento) => {
+    try {
+      setLoadingDetalhado(true);
+      
+      if (!orcamento || !orcamento.id) {
+        console.error('Orçamento inválido:', orcamento);
+        setError("Orçamento inválido ou sem ID");
+        setLoadingDetalhado(false);
         return;
       }
-
-      // Buscar informações detalhadas dos produtos para este orçamento
-      const itensDetalhados = itens.map(item => {
-        // Determinar o ID do produto
-        const produtoId = item.produto_id;
-        
-        if (!produtoId) {
-          console.warn('Item sem produto_id:', item);
-          return {
-            ...item,
-            nome: item.nome || 'Produto sem identificação',
-            descricao: '',
-            custo_unitario: item.custos?.total / item.area || 0,
-            custo_total: item.custos?.total || 0,
-            preco_venda: item.subtotal / item.area || item.subtotal || 0,
-            quantidade: item.area || 1,
-            valor_total: item.subtotal || 0,
-            margem: (item.subtotal || 0) - (item.custos?.total || 0),
-            margem_percentual: item.margemLucro || 0
-          };
-        }
-        
-        // Encontrar o produto correspondente
-        const produto = produtos.find(p => String(p.id) === String(produtoId));
-        
-        if (!produto) {
-          console.warn('Produto não encontrado para o id:', produtoId);
-          // Usar dados já calculados no item se disponíveis
-          if (item.custos && item.valores) {
-            return {
-              ...item,
-              nome: item.nome || 'Produto não encontrado',
-              descricao: '',
-              custo_unitario: item.custos.total / item.area || 0,
-              custo_total: item.custos.total || 0,
-              preco_venda: item.subtotal / item.area || 0,
-              quantidade: item.area || 1,
-              valor_total: item.subtotal || 0,
-              margem: (item.subtotal || 0) - (item.custos.total || 0),
-              margem_percentual: item.margemLucro ? item.margemLucro.toFixed(2) : 0
-            };
-          }
-          
-          return {
-            ...item,
-            nome: 'Produto não encontrado',
-            descricao: '',
-            custo_unitario: 0,
-            custo_total: 0,
-            preco_venda: item.subtotal || 0,
-            quantidade: 1,
-            valor_total: item.subtotal || 0,
-            margem: item.subtotal || 0,
-            margem_percentual: 100
-          };
-        }
-        
-        // Calcular custos e margens
-        const area = item.area || (item.largura * item.altura) || 1;
-        
-        // Determinar o custo unitário (por m²) corretamente para diferentes tipos de produtos
-        let custoUnitario = 0;
-        let custoTotal = 0;
-        
-        if (produto.modelo?.toUpperCase() === 'SCREEN' || 
-            produto.nome?.toUpperCase().includes('SCREEN') || 
-            produto.metodo_calculo === 'area') {
-            
-          // Para produtos de área (como SCREEN), o campo preco_custo JÁ CONTÉM o custo por m²
-          // Por exemplo, SCREEN 1% tem um custo de R$ 109,89 por m²
-          custoUnitario = parseFloat(produto.preco_custo) || 0;
-          custoTotal = custoUnitario * area; // Área × Custo por m²
-          console.log(`[Detalhamento] SCREEN: Custo por m² = R$ ${custoUnitario.toFixed(2)}, Área = ${area.toFixed(2)}m², Total = R$ ${custoTotal.toFixed(2)}`);
-        } else {
-          // Para outros tipos de produtos, usar a lógica existente
-          if (item.custos && item.custos.total) {
-            // Se já temos custos calculados no item, usar
-            custoTotal = item.custos.total;
-            custoUnitario = area > 0 ? custoTotal / area : custoTotal;
-          } else {
-            // Caso contrário, usar o preço de custo do catálogo
-            custoTotal = parseFloat(produto.preco_custo) || 0;
-            custoUnitario = area > 0 ? custoTotal / area : custoTotal;
-          }
-          console.log(`[Detalhamento] Custo unitário: ${custoUnitario} (total: ${custoTotal})`);
-        }
-        
-        const precoVenda = item.subtotal / area || 0;
-        const valorTotal = item.subtotal || 0;
-        const margem = valorTotal - custoTotal;
-        const margemPercentual = valorTotal > 0 ? (margem / valorTotal) * 100 : 0;
-        
-        return {
-          ...item,
-          nome: produto.nome || 'Sem nome',
-          descricao: produto.descricao || '',
-          area: area,
-          custo_unitario: custoUnitario,
-          custo_total: custoTotal,
-          preco_venda: precoVenda,
-          quantidade: area,
-          valor_total: valorTotal,
-          margem: margem,
-          margem_percentual: margemPercentual.toFixed(2)
-        };
-      });
       
-      // Atualizar o estado com os detalhes do orçamento
+      console.log('Iniciando processamento de detalhamento para orçamento:', orcamento.id);
+      
+      // Chamar nossa função aprimorada com tratamento de erros completo
+      await processarDetalhamento(orcamento.id);
+      
+    } catch (error) {
+      // Melhorar o log de erro para incluir mais informações
+      const errorInfo = {
+        message: error?.message || 'Erro desconhecido',
+        stack: error?.stack,
+        name: error?.name,
+        code: error?.code,
+        toString: error?.toString()
+      };
+      
+      console.error('Erro ao exibir detalhamento de custos - detalhes:', errorInfo);
+      
+      setError(`Erro ao processar detalhamento: ${errorInfo.message}`);
+      setLoadingDetalhado(false);
+      
+      // Inicializar estados para valores vazios quando ocorrem erros (conforme memória do usuário)
       setOrcamentoDetalhado({
-        ...orcamento,
-        itens_detalhados: itensDetalhados,
-        cliente: orcamento.clienteNome || clientes.find(c => String(c.id) === String(orcamento.cliente_id))?.nome || 'Cliente não encontrado'
+        id: orcamento?.id || 0,
+        numero: orcamento?.numero || 'N/A',
+        cliente: 'Erro ao carregar',
+        data: 'N/A',
+        status: 'erro',
+        valor_total: 0,
+        itens_detalhados: []
       });
-      
-      // Mostrar o modal/painel de detalhamento
-      setDetalhamentoVisivel(true);
-    } catch (err) {
-      console.error('Erro ao processar detalhamento de custos:', err);
-      setError('Ocorreu um erro ao processar o detalhamento de custos.');
     }
   };
 
-  // Função para fechar o detalhamento
-  const fecharDetalhamento = () => {
-    setDetalhamentoVisivel(false);
-    setOrcamentoDetalhado(null);
+  const getOrcamentoById = async (orcamentoId) => {
+    try {
+      const { data, error } = await supabase
+        .from('orcamentos')
+        .select('*, clientes(id, name)')
+        .eq('id', orcamentoId)
+        .single();
+      
+      if (error) {
+        throw error;
+      }
+      
+      if (!data) {
+        return null;
+      }
+      
+      // Usar a função processarDetalhamento para gerar detalhamento completo
+      await processarDetalhamento(orcamentoId);
+      
+      return data;
+    } catch (error) {
+      console.error('Erro ao buscar orçamento pelo ID:', error);
+      return null;
+    }
   };
 
-  // Formatação de moeda
+  // Função para formatar valores monetários com precisão de duas casas decimais
   const formatCurrency = useCallback((value) => {
-    if (value === null || value === undefined || isNaN(value)) {
+    if (value === undefined || value === null) {
       return 'R$ 0,00';
     }
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+    
+    // Garante que o valor seja tratado como número
+    const numValue = Number(value);
+    
+    // Verifica se é um número válido
+    if (isNaN(numValue)) {
+      return 'R$ 0,00';
+    }
+    
+    // Formata o número com 2 casas decimais e substitui ponto por vírgula
+    return `R$ ${numValue.toFixed(2).replace('.', ',')}`;
   }, []);
 
   // Formatação de percentual
@@ -1001,6 +1217,14 @@ function ReportsNew({ budgets = [], customers = [] }) {
     }
     return `${value.toFixed(2)}%`.replace('.', ',');
   }, []);
+
+  // Função para fechar o detalhamento
+  const fecharDetalhamento = () => {
+    setDetalhamentoVisivel(false);
+    // Importante limpar o estado para evitar problemas ao abrir novamente
+    setError(null);
+    // Não limpamos o orcamentoDetalhado para permitir animação de saída
+  };
 
   // Renderização do componente
   return (
@@ -1436,12 +1660,7 @@ function ReportsNew({ budgets = [], customers = [] }) {
                           plugins: {
                             tooltip: {
                               callbacks: {
-                                label: (context) => {
-                                  const value = context.raw;
-                                  const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                  const percentage = (value / total * 100).toFixed(2);
-                                  return `${context.label}: ${formatCurrency(value)} (${percentage}%)`;
-                                }
+                                label: (context) => `${context.label}: ${formatCurrency(context.raw)}`
                               }
                             }
                           }
@@ -1515,7 +1734,7 @@ function ReportsNew({ budgets = [], customers = [] }) {
           <div className="modal-overlay" onClick={fecharDetalhamento}></div>
           <div className="detalhamento-modal">
             <div className="detalhamento-header">
-              <h2>Detalhamento de Orçamento #{orcamentoDetalhado.id}</h2>
+              <h2>Detalhamento de Orçamento #{orcamentoDetalhado?.numero_orcamento}</h2>
               <button 
                 className="close-btn"
                 onClick={fecharDetalhamento}
@@ -1524,92 +1743,227 @@ function ReportsNew({ budgets = [], customers = [] }) {
               </button>
             </div>
             <div className="detalhamento-content">
-              <div className="detalhamento-info">
-                <p><strong>Cliente:</strong> {orcamentoDetalhado.cliente}</p>
-                <p><strong>Data:</strong> {new Date(orcamentoDetalhado.created_at).toLocaleDateString('pt-BR')}</p>
-                <p><strong>Status:</strong> <span className={`status-badge ${orcamentoDetalhado.status}`}>{orcamentoDetalhado.status}</span></p>
-                <p><strong>Total:</strong> {formatCurrency(orcamentoDetalhado.valor_total || 0)}</p>
-              </div>
-              
-              <h3>Detalhamento de Itens e Custos</h3>
-              {orcamentoDetalhado.itens_detalhados && orcamentoDetalhado.itens_detalhados.length > 0 ? (
-                <table className="detalhamento-table">
-                  <thead>
-                    <tr>
-                      <th>Produto</th>
-                      <th>Dimensões (L×A)</th>
-                      <th>Área (m²)</th>
-                      <th>Custo/m²</th>
-                      <th>Custo Total</th>
-                      <th>Preço/m²</th>
-                      <th>Valor Total</th>
-                      <th>Margem</th>
-                      <th>Margem (%)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orcamentoDetalhado.itens_detalhados.map((item, index) => (
-                      <tr key={index}>
-                        <td>{item.nome}</td>
-                        <td>
-                          {item.largura && item.altura 
-                            ? `${item.largura.toFixed(2)}m × ${item.altura.toFixed(2)}m` 
-                            : "N/A"}
-                        </td>
-                        <td>{item.area ? item.area.toFixed(2) : "N/A"}</td>
-                        <td>{formatCurrency(item.custo_unitario)}</td>
-                        <td>{formatCurrency(item.custo_total)}</td>
-                        <td>{formatCurrency(item.preco_venda)}</td>
-                        <td>{formatCurrency(item.valor_total)}</td>
-                        <td>{formatCurrency(item.margem)}</td>
-                        <td>{item.margem_percentual}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan="2"><strong>Totais</strong></td>
-                      <td><strong>{orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.area || 0), 0).toFixed(2)}</strong></td>
-                      <td></td>
-                      <td><strong>{formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.custo_total || 0), 0))}</strong></td>
-                      <td></td>
-                      <td><strong>{formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.valor_total || 0), 0))}</strong></td>
-                      <td><strong>{formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.margem || 0), 0))}</strong></td>
-                      <td>
-                        <strong>
-                          {(() => {
-                            const totalValor = orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.valor_total || 0), 0);
-                            const totalMargem = orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.margem || 0), 0);
-                            return totalValor > 0 
-                              ? ((totalMargem / totalValor) * 100).toFixed(2) 
-                              : "0.00";
-                          })()}%
-                        </strong>
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+              {loadingDetalhado ? (
+                <div className="loading-container" style={{ textAlign: 'center', padding: '50px' }}>
+                  <div className="spinner" style={{ 
+                    width: '40px', 
+                    height: '40px', 
+                    border: '5px solid #f3f3f3',
+                    borderTop: '5px solid #2170cf',
+                    borderRadius: '50%',
+                    margin: '0 auto 20px',
+                    animation: 'spin 1s linear infinite'
+                  }}></div>
+                  <p>Processando detalhamento...</p>
+                </div>
               ) : (
-                <div className="empty-info">
-                  <p>Não há itens detalhados disponíveis para este orçamento.</p>
+                <div>
+                  {error && <div className="error-message" style={{ color: 'red', padding: '10px', margin: '10px 0', backgroundColor: '#ffeeee', borderRadius: '4px' }}>{error}</div>}
+                  
+                  {orcamentoDetalhado && !error && (
+                    <div>
+                      <div className="detalhamento-info">
+                        <p><strong>Cliente:</strong> {orcamentoDetalhado.cliente}</p>
+                        <p><strong>Data:</strong> {(() => {
+                          try {
+                            if (!orcamentoDetalhado.data) return 'Data não disponível';
+                            
+                            // Verificar formato da data
+                            let dataOrcamento;
+                            
+                            // Tentar diferentes formatos de data
+                            if (typeof orcamentoDetalhado.data === 'string') {
+                              // Verificar se a data está no formato ISO
+                              if (orcamentoDetalhado.data.includes('T')) {
+                                dataOrcamento = new Date(orcamentoDetalhado.data);
+                              } else if (orcamentoDetalhado.data.includes('-')) {
+                                // Formato YYYY-MM-DD
+                                const [ano, mes, dia] = orcamentoDetalhado.data.split('-');
+                                dataOrcamento = new Date(ano, mes - 1, dia);
+                              } else if (orcamentoDetalhado.data.includes('/')) {
+                                // Formato DD/MM/YYYY
+                                const [dia, mes, ano] = orcamentoDetalhado.data.split('/');
+                                dataOrcamento = new Date(ano, mes - 1, dia);
+                              } else {
+                                // Tentar converter diretamente
+                                dataOrcamento = new Date(orcamentoDetalhado.data);
+                              }
+                            } else {
+                              // Se não for string, tentar converter diretamente
+                              dataOrcamento = new Date(orcamentoDetalhado.data);
+                            }
+                            
+                            // Verificar se a data é válida
+                            if (!isNaN(dataOrcamento.getTime())) {
+                              // Formatar a data corretamente
+                              return dataOrcamento.toLocaleDateString('pt-BR', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric'
+                              });
+                            } else {
+                              return 'Data não disponível';
+                            }
+                          } catch (e) {
+                            console.error("Erro ao formatar data:", e, orcamentoDetalhado.data);
+                            return 'Data não disponível';
+                          }
+                        })()}</p>
+                        <p><strong>Status:</strong> <span className={`status-badge ${orcamentoDetalhado.status}`}>{orcamentoDetalhado.status}</span></p>
+                        <p><strong>Total:</strong> {formatCurrency(orcamentoDetalhado.valor_total || 0)}</p>
+                      </div>
+                      
+                      <h3>Detalhamento de Itens e Custos</h3>
+                      {orcamentoDetalhado.itens_detalhados && orcamentoDetalhado.itens_detalhados.length > 0 ? (
+                        <div className="detalhamento-table-container">
+                          <table className="detalhamento-table">
+                            <thead>
+                              <tr>
+                                <th>Produto</th>
+                                <th>Dim.</th>
+                                <th>Área</th>
+                                <th>Custo/m²</th>
+                                <th>Custo Mat.</th>
+                                <th>Trilho C/L</th>
+                                <th>Bandô C/L</th>
+                                <th>Acess.</th>
+                                <th>Instal.</th>
+                                <th>Custo Total</th>
+                                <th>Valor Total</th>
+                                <th>Margem</th>
+                                <th>Margem %</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {orcamentoDetalhado.itens_detalhados.map((item, index) => {
+                                return (
+                                  <tr key={index}>
+                                    <td title={item.nome}>{item.nome}</td>
+                                    <td>
+                                      {item.largura && item.altura 
+                                        ? `${item.largura.toFixed(2)}×${item.altura.toFixed(2)}` 
+                                        : "N/A"}
+                                    </td>
+                                    <td>{item.area?.toFixed(2) || "0.00"}</td>
+                                    <td>{formatCurrency(item.custo_unitario || 0)}</td>
+                                    <td>{formatCurrency(item.custo_material || 0)}</td>
+                                    <td>
+                                      {formatCurrency(item.custo_trilho || 0)}
+                                    </td>
+                                    <td>
+                                      {formatCurrency(item.custo_bando || 0)}
+                                    </td>
+                                    <td>{formatCurrency(item.custo_acessorios || 0)}</td>
+                                    <td>{formatCurrency(item.valor_instalacao || 0)}</td>
+                                    <td>{formatCurrency(item.custo_total || 0)}</td>
+                                    <td>{formatCurrency(item.valor_total || 0)}</td>
+                                    <td>{formatCurrency((item.valor_total || 0) - (item.custo_total || 0))}</td>
+                                    <td>
+                                      {((item.valor_total > 0 
+                                        ? ((item.valor_total - item.custo_total) / item.valor_total * 100) 
+                                        : 0).toFixed(1))}%
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot>
+                              <tr>
+                                <td colSpan="2"><strong>Totais</strong></td>
+                                <td>
+                                  <strong>
+                                    {orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.area || 0), 0).toFixed(2)}
+                                  </strong>
+                                </td>
+                                <td></td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.custo_material || 0), 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.custo_trilho || 0), 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.custo_bando || 0), 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.custo_acessorios || 0), 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.valor_instalacao || 0), 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => {
+                                      // Mesmo cálculo detalhado para garantir consistência
+                                      const custoTotal = (item.custo_material || 0) + 
+                                                        (item.custo_trilho || 0) + 
+                                                        (item.custo_bando || 0) + 
+                                                        (item.custo_acessorios || 0) +
+                                                        (item.valor_instalacao || 0);
+                                      return acc + custoTotal;
+                                    }, 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency(orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.valor_total || 0), 0))}
+                                  </strong>
+                                </td>
+                                <td>
+                                  <strong>
+                                    {formatCurrency((() => {
+                                      const totalValor = orcamentoDetalhado.itens_detalhados.reduce((acc, item) => acc + (item.valor_total || 0), 0);
+                                      const totalCusto = orcamentoDetalhado.itens_detalhados.reduce((acc, item) => {
+                                        // Mesmo cálculo detalhado para garantir consistência
+                                        const custoTotal = (item.custo_material || 0) + 
+                                                          (item.custo_trilho || 0) + 
+                                                          (item.custo_bando || 0) + 
+                                                          (item.custo_acessorios || 0) +
+                                                          (item.valor_instalacao || 0);
+                                        return acc + custoTotal;
+                                      }, 0);
+                                      
+                                      return totalValor > 0 ? ((totalValor - totalCusto) / totalValor * 100).toFixed(1) : "0.0";
+                                    })())}%
+                                  </strong>
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      ) : (
+                        <p>Não há itens para mostrar</p>
+                      )}
+                      
+                      <div className="detalhamento-extras">
+                        <h3>Informações Adicionais</h3>
+                        <div className="extras-grid">
+                          {orcamentoDetalhado.valorInstalacaoTotal > 0 && (
+                            <div className="extra-item">
+                              <p><strong>Valor de Instalação:</strong> {formatCurrency(orcamentoDetalhado.valorInstalacaoTotal)}</p>
+                            </div>
+                          )}
+                          {orcamentoDetalhado.observacao && (
+                            <div className="extra-item">
+                              <p><strong>Observações:</strong> {orcamentoDetalhado.observacao}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
-
-              <div className="detalhamento-extras">
-                <h3>Informações Adicionais</h3>
-                <div className="extras-grid">
-                  {orcamentoDetalhado.valorInstalacaoTotal > 0 && (
-                    <div className="extra-item">
-                      <p><strong>Valor de Instalação:</strong> {formatCurrency(orcamentoDetalhado.valorInstalacaoTotal)}</p>
-                    </div>
-                  )}
-                  {orcamentoDetalhado.observacao && (
-                    <div className="extra-item">
-                      <p><strong>Observações:</strong> {orcamentoDetalhado.observacao}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
             </div>
           </div>
         </>

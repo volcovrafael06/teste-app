@@ -62,6 +62,15 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     trilho_motorizado: { sale_price: 0 }
   });
 
+  const trilhoOptions = {
+    'trilho_redondo_com_comando': 'Trilho redondo com comando',
+    'trilho_redondo_sem_comando': 'Trilho redondo sem comando',
+    'trilho_slim_com_comando': 'Trilho Slim com comando',
+    'trilho_slim_sem_comando': 'Trilho Slim sem comando',
+    'trilho_quadrado_com_rodizio_em_gancho': 'Trilho quadrado com rodizio em gancho',
+    'trilho_motorizado': 'Trilho motorizado'
+  };
+
   useEffect(() => {
     const fetchCustomers = async () => {
       try {
@@ -180,18 +189,28 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       try {
         const { data, error } = await supabase
           .from('rail_pricing')
-          .select('*');
+          .select('*')
+          .order('rail_type');
 
         if (error) throw error;
 
         if (data) {
           console.log('Configurações dos trilhos carregadas:', data);
+          // Criar um mapa com os tipos de trilho e seus preços
           const configMap = {};
+          
           data.forEach(item => {
             configMap[item.rail_type] = {
-              sale_price: item.sale_price || 0
+              sale_price: parseFloat(item.sale_price) || 0,
+              cost_price: parseFloat(item.cost_price) || 0
             };
           });
+
+          // Manter mapeamentos adicionais para compatibilidade
+          configMap.trilho_redondo_comando = configMap.trilho_redondo_com_comando;
+          configMap.trilho_slim_comando = configMap.trilho_slim_com_comando;
+          configMap.trilho_quadrado_gancho = configMap.trilho_quadrado_com_rodizio_em_gancho;
+
           setTrilhosConfig(configMap);
         }
       } catch (error) {
@@ -200,6 +219,38 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     };
 
     loadTrilhosConfig();
+  }, []);
+
+  useEffect(() => {
+    const fetchLatestProducts = async () => {
+      try {
+        const { data, error } = await supabase.from('produtos').select('*');
+        if (error) throw error;
+        setProducts(data || []);
+      } catch (error) {
+        console.error('Error fetching latest products:', error);
+      }
+    };
+
+    const productsSubscription = supabase
+      .channel('produtos_changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'produtos' 
+        }, 
+        () => {
+          fetchLatestProducts();
+        }
+      )
+      .subscribe();
+
+    fetchLatestProducts();
+
+    return () => {
+      productsSubscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -463,6 +514,18 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
         // Use the area that already includes the 10% increase if Painel is selected
         subtotal = area * price;
       }
+      
+      // Adiciona o valor do trilho se selecionado (para qualquer modelo)
+      if (product.trilho_tipo && product.valor_trilho > 0) {
+        console.log('Adicionando valor do trilho (modelo não-Wave):', {
+          tipo: product.trilho_tipo,
+          valorConfigurado: trilhosConfig[product.trilho_tipo],
+          valorCalculado: product.valor_trilho,
+          subtotalAntes: subtotal,
+          subtotalDepois: subtotal + product.valor_trilho
+        });
+        subtotal += product.valor_trilho;
+      }
     }
 
     // Adiciona valor do bandô se marcado
@@ -526,23 +589,18 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
     }
     
     try {
-      // Mapeia o nome do trilho para o tipo correto na tabela rail_pricing
-      const railTypeMap = {
-        'trilho_redondo_com_comando': 'trilho_redondo_comando',
-        'trilho_redondo_sem_comando': 'trilho_redondo_sem_comando',
-        'trilho_slim_com_comando': 'trilho_slim_comando',
-        'trilho_slim_sem_comando': 'trilho_slim_sem_comando',
-        'trilho_quadrado_com_rodizio_em_gancho': 'trilho_quadrado_gancho',
-        'trilho_motorizado': 'trilho_motorizado'
-      };
-
-      const mappedRailType = railTypeMap[railType] || railType;
-      const salePrice = parseFloat(trilhosConfig[mappedRailType]?.sale_price) || 0;
+      // Verificar se a configuração do trilho existe
+      if (!trilhosConfig || !trilhosConfig[railType]) {
+        console.warn(`Configuração não encontrada para o trilho: ${railType}`);
+        console.log('Configurações disponíveis:', trilhosConfig);
+        return 0;
+      }
+      
+      const salePrice = parseFloat(trilhosConfig[railType]?.sale_price) || 0;
       const parsedWidth = parseFloat(width) || 0;
       
       console.log('Dados para cálculo do trilho:', {
         tipo: railType,
-        tipoMapeado: mappedRailType,
         configuracaoTrilhos: trilhosConfig,
         precoVenda: salePrice,
         largura: parsedWidth,
@@ -609,13 +667,14 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
   const handleProductDimensionChange = (e) => {
     const { name, value } = e.target;
     
-    if (name === 'width' && currentProduct.product?.modelo?.toUpperCase() === 'WAVE' && currentProduct.trilho_tipo) {
-      // Recalcula o preço do trilho quando a largura muda
+    if (name === 'width' && currentProduct.trilho_tipo) {
+      // Recalcula o preço do trilho quando a largura muda (para qualquer modelo)
       const railPrice = calculateRailPrice(value, currentProduct.trilho_tipo);
       
       console.log('Atualizando largura e recalculando trilho:', {
         novaLargura: value,
-        novoValorTrilho: railPrice
+        novoValorTrilho: railPrice,
+        modelo: currentProduct.product?.modelo
       });
 
       setCurrentProduct(prev => {
@@ -1059,6 +1118,18 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
         nextBudgetNumber = Math.max(985, maxBudget[0].numero_orcamento + 1);
       }
 
+      // Apenas lê os valores dos trilhos da tabela rail_pricing (não atualiza)
+      const productsWithRails = newBudget.products.filter(product => product.trilho_tipo);
+      
+      for (const product of productsWithRails) {
+        const railConfig = trilhosConfig[product.trilho_tipo];
+        if (railConfig) {
+          // Usa o valor atual da tabela para cálculos
+          const currentSalePrice = parseFloat(railConfig.sale_price) || 0;
+          product.valor_trilho = parseFloat(product.width) * currentSalePrice;
+        }
+      }
+
       const cleanProducts = newBudget.products.map(product => ({
         produto_id: product.product.id,
         largura: parseFloat(product.width),
@@ -1078,7 +1149,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
       const cleanAccessories = newBudget.accessories.map(accessory => ({
         accessory_id: accessory.accessory.id,
         color: accessory.color,
-        quantity: parseFloat(accessory.quantity), // Usar parseFloat para permitir valores decimais
+        quantity: parseFloat(accessory.quantity),
         subtotal: accessory.subtotal
       }));
 
@@ -1090,7 +1161,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
         acessorios_json: JSON.stringify(cleanAccessories),
         valor_negociado: newBudget.negotiatedValue,
         status: isEditing ? undefined : 'pending',
-        numero_orcamento: isEditing ? undefined : nextBudgetNumber // Adiciona o número do orçamento apenas para novos orçamentos
+        numero_orcamento: isEditing ? undefined : nextBudgetNumber
       };
 
       console.log('Saving budget with data:', budgetData);
@@ -1314,6 +1385,25 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
             </div>
           )}
         </div>
+
+        {currentProduct.product?.modelo.toUpperCase() === 'WAVE' && (
+          <div className="form-group">
+            <label htmlFor="trilho_tipo">Tipo de Trilho</label>
+            <select
+              id="trilho_tipo"
+              value={currentProduct.trilho_tipo}
+              onChange={handleRailTypeChange}
+              className="form-control"
+            >
+              <option value="">Selecione o tipo de trilho</option>
+              {Object.entries(trilhoOptions).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
     );
   };
@@ -1378,7 +1468,7 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
                       )}
                       {prod.bando && <p>Bandô: R$ {prod.bandoValue.toFixed(2)}</p>}
                       {prod.installation && <p>Instalação: R$ {prod.installationValue}</p>}
-                      {prod.trilho_tipo && <p>Trilho: {prod.trilho_tipo}</p>}
+                      {prod.trilho_tipo && <p>Trilho: {trilhoOptions[prod.trilho_tipo]}</p>}
                       {prod.valor_trilho && <p>Valor do Trilho: R$ {prod.valor_trilho.toFixed(2)}</p>}
                       <p className="product-subtotal">Subtotal: R$ {prod.subtotal.toFixed(2)}</p>
                     </div>
@@ -1431,12 +1521,11 @@ function Budgets({ budgets, setBudgets, customers: initialCustomers, products: i
                       className="form-control"
                     >
                       <option value="">Selecione o tipo de trilho</option>
-                      <option value="trilho_redondo_com_comando">Trilho redondo com comando</option>
-                      <option value="trilho_redondo_sem_comando">Trilho redondo sem comando</option>
-                      <option value="trilho_slim_com_comando">Trilho Slim com comando</option>
-                      <option value="trilho_slim_sem_comando">Trilho Slim sem comando</option>
-                      <option value="trilho_quadrado_com_rodizio_em_gancho">Trilho quadrado com rodizio em gancho</option>
-                      <option value="trilho_motorizado">Trilho motorizado</option>
+                      {Object.entries(trilhoOptions).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 )}

@@ -26,21 +26,20 @@ function Configuracoes({ setCompanyLogo }) {
   const [bandoVenda, setBandoVenda] = useState(120);
   const [trilhoRedondoCusto, setTrilhoRedondoCusto] = useState(0);
   const [trilhoRedondoVenda, setTrilhoRedondoVenda] = useState(0);
-  const [trilhoSlimCusto, setTrilhoSlimCusto] = useState(0);
-  const [trilhoSlimVenda, setTrilhoSlimVenda] = useState(0);
-  const [trilhoQuadradoCusto, setTrilhoQuadradoCusto] = useState(0);
-  const [trilhoQuadradoVenda, setTrilhoQuadradoVenda] = useState(0);
   const [trilhoRedondoSemComandoCusto, setTrilhoRedondoSemComandoCusto] = useState(0);
   const [trilhoRedondoSemComandoVenda, setTrilhoRedondoSemComandoVenda] = useState(0);
+  const [trilhoSlimCusto, setTrilhoSlimCusto] = useState(0);
+  const [trilhoSlimVenda, setTrilhoSlimVenda] = useState(0);
   const [trilhoSlimSemComandoCusto, setTrilhoSlimSemComandoCusto] = useState(0);
   const [trilhoSlimSemComandoVenda, setTrilhoSlimSemComandoVenda] = useState(0);
+  const [trilhoQuadradoCusto, setTrilhoQuadradoCusto] = useState(0);
+  const [trilhoQuadradoVenda, setTrilhoQuadradoVenda] = useState(0);
   const [trilhoMotorizadoCusto, setTrilhoMotorizadoCusto] = useState(0);
   const [trilhoMotorizadoVenda, setTrilhoMotorizadoVenda] = useState(0);
 
   useEffect(() => {
     loadConfiguracoes();
     fetchSellers();
-    loadRailPricing();
   }, [setCompanyLogo]);
 
   const loadConfiguracoes = async () => {
@@ -67,6 +66,20 @@ function Configuracoes({ setCompanyLogo }) {
         setCompanyLogo(data.company_logo || null);
         setBandoCusto(data.bando_custo || 80);
         setBandoVenda(data.bando_venda || 120);
+        
+        // Carregar preços dos trilhos diretamente da tabela configuracoes
+        setTrilhoRedondoCusto(parseFloat(data.trilho_redondo_com_comando) || 0);
+        setTrilhoRedondoVenda(parseFloat(data.trilho_redondo_com_comando) || 0);
+        setTrilhoRedondoSemComandoCusto(parseFloat(data.trilho_redondo_sem_comando) || 0);
+        setTrilhoRedondoSemComandoVenda(parseFloat(data.trilho_redondo_sem_comando) || 0);
+        setTrilhoSlimCusto(parseFloat(data.trilho_slim_com_comando) || 0);
+        setTrilhoSlimVenda(parseFloat(data.trilho_slim_com_comando) || 0);
+        setTrilhoSlimSemComandoCusto(parseFloat(data.trilho_slim_sem_comando) || 0);
+        setTrilhoSlimSemComandoVenda(parseFloat(data.trilho_slim_sem_comando) || 0);
+        setTrilhoQuadradoCusto(parseFloat(data.trilho_quadrado_com_rodizio_em_gancho) || 0);
+        setTrilhoQuadradoVenda(parseFloat(data.trilho_quadrado_com_rodizio_em_gancho) || 0);
+        setTrilhoMotorizadoCusto(parseFloat(data.trilho_motorizado) || 0);
+        setTrilhoMotorizadoVenda(parseFloat(data.trilho_motorizado) || 0);
       }
     } catch (err) {
       setError(err.message);
@@ -84,51 +97,6 @@ function Configuracoes({ setCompanyLogo }) {
       console.error("Error fetching sellers:", err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadRailPricing = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('rail_pricing')
-        .select('*');
-
-      if (error) throw error;
-
-      if (data) {
-        console.log('Carregando preços dos trilhos:', data);
-        data.forEach(item => {
-          switch (item.rail_type) {
-            case 'trilho_redondo_com_comando':
-              setTrilhoRedondoCusto(parseFloat(item.cost_price) || 0);
-              setTrilhoRedondoVenda(parseFloat(item.sale_price) || 0);
-              break;
-            case 'trilho_slim_com_comando':
-              setTrilhoSlimCusto(parseFloat(item.cost_price) || 0);
-              setTrilhoSlimVenda(parseFloat(item.sale_price) || 0);
-              break;
-            case 'trilho_quadrado_com_rodizio_em_gancho':
-              setTrilhoQuadradoCusto(parseFloat(item.cost_price) || 0);
-              setTrilhoQuadradoVenda(parseFloat(item.sale_price) || 0);
-              break;
-            case 'trilho_redondo_sem_comando':
-              setTrilhoRedondoSemComandoCusto(parseFloat(item.cost_price) || 0);
-              setTrilhoRedondoSemComandoVenda(parseFloat(item.sale_price) || 0);
-              break;
-            case 'trilho_slim_sem_comando':
-              setTrilhoSlimSemComandoCusto(parseFloat(item.cost_price) || 0);
-              setTrilhoSlimSemComandoVenda(parseFloat(item.sale_price) || 0);
-              break;
-            case 'trilho_motorizado':
-              setTrilhoMotorizadoCusto(parseFloat(item.cost_price) || 0);
-              setTrilhoMotorizadoVenda(parseFloat(item.sale_price) || 0);
-              break;
-          }
-        });
-      }
-    } catch (err) {
-      setError(err.message);
-      console.error("Erro ao carregar preços dos trilhos:", err);
     }
   };
 
@@ -273,7 +241,7 @@ function Configuracoes({ setCompanyLogo }) {
       setLoading(true);
       setError(null);
 
-      // Salvar configurações gerais
+      // Salvar todas as configurações incluindo preços dos trilhos
       const { error: configError } = await supabase
         .from('configuracoes')
         .update({
@@ -289,57 +257,20 @@ function Configuracoes({ setCompanyLogo }) {
           formula_instalacao: formulaInstalacao,
           company_logo: localCompanyLogo,
           bando_custo: bandoCusto,
-          bando_venda: bandoVenda
+          bando_venda: bandoVenda,
+          // Salvar preços dos trilhos diretamente na tabela configuracoes
+          trilho_redondo_com_comando: trilhoRedondoCusto,
+          trilho_redondo_sem_comando: trilhoRedondoSemComandoCusto,
+          trilho_slim_com_comando: trilhoSlimCusto,
+          trilho_slim_sem_comando: trilhoSlimSemComandoCusto,
+          trilho_quadrado_com_rodizio_em_gancho: trilhoQuadradoCusto,
+          trilho_motorizado: trilhoMotorizadoCusto
         })
         .eq('id', 1);
 
-      if (configError) throw configError;
-
-      // Salvar preços dos trilhos
-      const railUpdates = [
-        {
-          rail_type: 'trilho_redondo_com_comando',
-          cost_price: trilhoRedondoCusto,
-          sale_price: trilhoRedondoVenda
-        },
-        {
-          rail_type: 'trilho_slim_com_comando',
-          cost_price: trilhoSlimCusto,
-          sale_price: trilhoSlimVenda
-        },
-        {
-          rail_type: 'trilho_quadrado_com_rodizio_em_gancho',
-          cost_price: trilhoQuadradoCusto,
-          sale_price: trilhoQuadradoVenda
-        },
-        {
-          rail_type: 'trilho_redondo_sem_comando',
-          cost_price: trilhoRedondoSemComandoCusto,
-          sale_price: trilhoRedondoSemComandoVenda
-        },
-        {
-          rail_type: 'trilho_slim_sem_comando',
-          cost_price: trilhoSlimSemComandoCusto,
-          sale_price: trilhoSlimSemComandoVenda
-        },
-        {
-          rail_type: 'trilho_motorizado',
-          cost_price: trilhoMotorizadoCusto,
-          sale_price: trilhoMotorizadoVenda
-        }
-      ];
-
-      // Atualizar cada tipo de trilho
-      for (const update of railUpdates) {
-        const { error: railError } = await supabase
-          .from('rail_pricing')
-          .update({ 
-            cost_price: update.cost_price,
-            sale_price: update.sale_price
-          })
-          .eq('rail_type', update.rail_type);
-
-        if (railError) throw railError;
+      if (configError) {
+        console.error("Erro ao salvar configurações:", configError);
+        throw configError;
       }
 
       setSaveMessage('Configurações salvas com sucesso!');
@@ -349,61 +280,6 @@ function Configuracoes({ setCompanyLogo }) {
       console.error("Erro ao salvar configurações:", err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const saveRailPricing = async () => {
-    try {
-      const updates = [
-        {
-          rail_type: 'trilho_redondo_com_comando',
-          cost_price: trilhoRedondoCusto,
-          sale_price: trilhoRedondoVenda
-        },
-        {
-          rail_type: 'trilho_slim_com_comando',
-          cost_price: trilhoSlimCusto,
-          sale_price: trilhoSlimVenda
-        },
-        {
-          rail_type: 'trilho_quadrado_com_rodizio_em_gancho',
-          cost_price: trilhoQuadradoCusto,
-          sale_price: trilhoQuadradoVenda
-        },
-        {
-          rail_type: 'trilho_redondo_sem_comando',
-          cost_price: trilhoRedondoSemComandoCusto,
-          sale_price: trilhoRedondoSemComandoVenda
-        },
-        {
-          rail_type: 'trilho_slim_sem_comando',
-          cost_price: trilhoSlimSemComandoCusto,
-          sale_price: trilhoSlimSemComandoVenda
-        },
-        {
-          rail_type: 'trilho_motorizado',
-          cost_price: trilhoMotorizadoCusto,
-          sale_price: trilhoMotorizadoVenda
-        }
-      ];
-
-      for (const update of updates) {
-        const { error } = await supabase
-          .from('rail_pricing')
-          .update({ 
-            cost_price: update.cost_price,
-            sale_price: update.sale_price
-          })
-          .eq('rail_type', update.rail_type);
-
-        if (error) throw error;
-      }
-
-      setSaveMessage('Configurações salvas com sucesso!');
-      setTimeout(() => setSaveMessage(''), 3000);
-    } catch (err) {
-      setError(err.message);
-      console.error("Error saving rail pricing:", err);
     }
   };
 
@@ -594,7 +470,7 @@ function Configuracoes({ setCompanyLogo }) {
         </div>
         <div className="settings-section">
           <h3>Configurações de Preços dos Trilhos</h3>
-          <div className="settings-grid">
+          <div className="rail-pricing-container">
             <div className="settings-group">
               <h4>Trilho Redondo com Comando</h4>
               <div className="input-group">
@@ -734,12 +610,7 @@ function Configuracoes({ setCompanyLogo }) {
           </button>
           <button
             className="save-button"
-            onClick={async () => {
-              await Promise.all([
-                handleSave(),
-                saveRailPricing()
-              ]);
-            }}
+            onClick={handleSave}
             disabled={loading || !!cnpjErrorMessage}
           >
             {loading ? 'Salvando...' : 'Salvar Configurações'}

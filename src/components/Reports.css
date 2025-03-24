@@ -394,49 +394,29 @@
   padding: 2rem;
 }
 
-.loading-spinner {
-  border: 5px solid #f3f3f3;
-  border-top: 5px solid #3498db;
-  border-radius: 50%;
-  width: 50px;
-  height: 50px;
-  animation: spin 1s linear infinite;
-  margin-bottom: 1rem;
-}
-
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
 
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 5px solid #f3f3f3;
+  border-top: 5px solid #2170cf;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20px;
+}
+
 .error-message {
-  background-color: #ffeeee;
-  border: 1px solid #ffaaaa;
-  border-radius: 5px;
-  padding: 1rem;
-  margin: 1rem 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.error-message p {
-  color: #e74c3c;
-  margin-bottom: 1rem;
-}
-
-.error-message button {
-  background-color: #e74c3c;
-  color: white;
-  border: none;
+  color: #d32f2f;
+  background-color: #ffebee;
+  padding: 12px;
+  margin: 10px 0;
   border-radius: 4px;
-  padding: 0.5rem 1rem;
-  cursor: pointer;
+  border-left: 4px solid #d32f2f;
   font-weight: 500;
-}
-
-.error-message button:hover {
-  background-color: #c0392b;
 }
 
 /* Filtros */
@@ -860,37 +840,112 @@
 }
 
 /* Estilos para a tabela de detalhamento */
-.detalhamento-table th:nth-child(1) {
-  min-width: 150px;
+.detalhamento-modal {
+  max-width: 95vw;
+  width: auto;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
-.detalhamento-table th:nth-child(2) {
-  min-width: 120px;
+.detalhamento-table-container {
+  width: 100%;
+  overflow-x: auto;
+  margin: 20px 0;
+  border: 1px solid #eee;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.detalhamento-table {
+  min-width: 1200px; /* Garantir mínima largura para conteúdo completo */
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto; /* Alterado para auto para ajustar ao conteúdo */
+  font-size: 0.82rem;
+}
+
+.detalhamento-table th, 
+.detalhamento-table td {
+  padding: 6px 4px;
+  border: 1px solid #ddd;
+  text-align: center;
+  white-space: nowrap; /* Impede quebra de texto */
+}
+
+/* Tamanhos específicos para cada coluna */
+.detalhamento-table th:nth-child(1),
+.detalhamento-table td:nth-child(1) { /* Produto */
+  max-width: 120px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.detalhamento-table th:nth-child(2),
+.detalhamento-table td:nth-child(2) { /* Dimensões */
+  min-width: 80px;
+}
+
+.detalhamento-table th:nth-child(3),
+.detalhamento-table td:nth-child(3) { /* Área */
+  min-width: 60px;
+}
+
+.detalhamento-table th:nth-child(4),
+.detalhamento-table td:nth-child(4), /* Custo/m² */
+.detalhamento-table th:nth-child(5),
+.detalhamento-table td:nth-child(5), /* Custo material */
+.detalhamento-table th:nth-child(6),
+.detalhamento-table td:nth-child(6), /* Trilho */
+.detalhamento-table th:nth-child(7),
+.detalhamento-table td:nth-child(7), /* Bandô */
+.detalhamento-table th:nth-child(8),
+.detalhamento-table td:nth-child(8), /* Acessórios */
+.detalhamento-table th:nth-child(9),
+.detalhamento-table td:nth-child(9), /* Instalação */
+.detalhamento-table th:nth-child(10),
+.detalhamento-table td:nth-child(10), /* Custo Total */
+.detalhamento-table th:nth-child(11),
+.detalhamento-table td:nth-child(11), /* Valor Total */
+.detalhamento-table th:nth-child(12),
+.detalhamento-table td:nth-child(12) { /* Margem */
+  min-width: 90px;
+}
+
+.detalhamento-table th:nth-child(13),
+.detalhamento-table td:nth-child(13) { /* Margem % */
+  min-width: 70px;
 }
 
 .detalhamento-table th {
-  white-space: nowrap;
+  background-color: #f5f5f5;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: bold;
 }
 
-/* Botões na tabela de orçamentos */
-.detalhamento-btn {
-  background-color: var(--accent-color);
-  color: white;
-  border: none;
-  border-radius: 4px;
-  padding: 6px 10px;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  white-space: nowrap;
+/* Estilo para valores numéricos */
+.detalhamento-table td:nth-child(3),
+.detalhamento-table td:nth-child(4),
+.detalhamento-table td:nth-child(5),
+.detalhamento-table td:nth-child(6),
+.detalhamento-table td:nth-child(7),
+.detalhamento-table td:nth-child(8),
+.detalhamento-table td:nth-child(9),
+.detalhamento-table td:nth-child(10),
+.detalhamento-table td:nth-child(11),
+.detalhamento-table td:nth-child(12),
+.detalhamento-table tfoot td {
+  text-align: right;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
 }
 
-.detalhamento-btn svg {
-  font-size: 0.9em;
+/* Ajuste adicional para o modal */
+.detalhamento-modal {
+  max-width: 95%;
+  width: 1200px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 /* Modal overlay */
@@ -915,7 +970,7 @@
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
   z-index: 1000;
   width: 90%;
-  max-width: 1200px;
+  max-width: 95vw;
   max-height: 90vh;
   overflow-y: auto;
   display: flex;
